@@ -625,8 +625,9 @@ h1 {
 }
 
 .song-card {
+  position: relative;
   display: grid;
-  grid-template-columns: 56px 1fr;
+  grid-template-columns: 56px minmax(0, 1fr) 38px;
   grid-template-rows: auto auto;
   column-gap: 10px;
   min-height: 72px;
@@ -644,19 +645,49 @@ h1 {
   object-fit: cover;
 }
 
-.song-card span {
-  align-self: end;
+.song-select {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
+}
+
+.song-select span {
+  grid-column: 2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 900;
 }
 
-.song-card small {
+.song-select small {
+  grid-column: 2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 700;
+}
+
+.song-play {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  justify-self: end;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  color: #fffaf0;
+  background: var(--charcoal);
+  border: 0;
+  border-radius: 8px;
 }
 
 .task-panel {

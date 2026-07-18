@@ -546,6 +546,8 @@ function App() {
               songStatus={songStatus}
               selectedSong={selectedSong}
               setSelectedSong={setSelectedSong}
+              audioOn={audioOn}
+              setAudioOn={setAudioOn}
               profileId={profileId}
               setProfileId={setProfileId}
             />
@@ -625,9 +627,18 @@ function MusicPanel(props) {
     songStatus,
     selectedSong,
     setSelectedSong,
+    audioOn,
+    setAudioOn,
     profileId,
     setProfileId,
   } = props;
+
+  function toggleSongPreview(song) {
+    const isCurrentSong = selectedSong?.trackId === song.trackId;
+    setSelectedSong(song);
+    setProfileId('itunes');
+    setAudioOn(isCurrentSong ? !audioOn : true);
+  }
 
   return (
     <div className="sound-panel">
@@ -705,15 +716,23 @@ function MusicPanel(props) {
 
       <div className="song-grid">
         {songs.map((song) => (
-          <button
+          <article
             key={song.trackId}
             className={`song-card ${selectedSong?.trackId === song.trackId ? 'selected' : ''}`}
-            onClick={() => { setSelectedSong(song); setProfileId('itunes'); }}
           >
             <img src={song.artworkUrl100} alt="" />
-            <span>{song.trackName}</span>
-            <small>{song.artistName}</small>
-          </button>
+            <button className="song-select" onClick={() => { setSelectedSong(song); setProfileId('itunes'); }}>
+              <span>{song.trackName}</span>
+              <small>{song.artistName}</small>
+            </button>
+            <button
+              className="song-play"
+              onClick={() => toggleSongPreview(song)}
+              title={`${selectedSong?.trackId === song.trackId && audioOn ? 'Pause' : 'Play'} preview`}
+            >
+              {selectedSong?.trackId === song.trackId && audioOn ? <Pause size={16} /> : <Play size={16} />}
+            </button>
+          </article>
         ))}
         {songStatus === 'empty' ? <p className="muted">No preview tracks found. Try a different mood or search term.</p> : null}
       </div>
