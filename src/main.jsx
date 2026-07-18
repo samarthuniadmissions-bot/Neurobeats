@@ -252,6 +252,10 @@ function App() {
   }, [groqKey]);
 
   useEffect(() => {
+    setMusicOptions(fallbackOptions);
+  }, [fallbackOptions]);
+
+  useEffect(() => {
     if (!startedAt || phase !== 'testing') return undefined;
     const timer = window.setInterval(() => {
       setElapsed(Math.floor((Date.now() - startedAt) / 1000));
@@ -340,69 +344,6 @@ function App() {
       setSongStatus(results.length ? 'ready' : 'empty');
     } catch {
       setSongStatus('error');
-    }
-  }
-
-  function applyMusicOptions(options, status = 'ready') {
-    setMusicOptions(options);
-    setGroqInsight(options.map((option) => `${option.title}: ${option.reason}`).join(' '));
-    setGroqStatus(status);
-  }
-
-  function parseGroqMusicOptions(text) {
-    const jsonMatch = text?.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return null;
-
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      const options = parsed
-        .filter((option) => option.title && option.searchTerm && option.reason)
-        .slice(0, 5)
-        .map((option) => ({
-          title: String(option.title),
-          searchTerm: String(option.searchTerm),
-          reason: String(option.reason),
-        }));
-      return options.length ? options : null;
-    } catch {
-      return null;
-    }
-  }
-
-  async function analyzeAnswersWithGroq() {
-    if (!groqKey.trim()) {
-      applyMusicOptions(fallbackOptions, 'local');
-      return;
-    }
-
-    setGroqStatus('loading');
-    try {
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${groqKey.trim()}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are NeuroBeat. Analyze study preference quiz answers and return only JSON. The JSON must be an array of 4 objects with title, searchTerm, and reason. searchTerm must be a concise iTunes music search query.',
-            },
-            {
-              role: 'user',
-              content: JSON.stringify({ quizAnswers, recentSessions: sessions.slice(0, 6) }),
-            },
-          ],
-          temperature: 0.7,
-        }),
-      });
-      const data = await response.json();
-      const text = data.choices?.[0]?.message?.content;
-      applyMusicOptions(parseGroqMusicOptions(text) || fallbackOptions, 'ready');
-    } catch {
-      applyMusicOptions(fallbackOptions, 'error');
     }
   }
 
@@ -600,7 +541,6 @@ function App() {
               songQuery={songQuery}
               setSongQuery={setSongQuery}
               musicOptions={musicOptions}
-              analyzeAnswersWithGroq={analyzeAnswersWithGroq}
               groqStatus={groqStatus}
               songs={songs}
               songStatus={songStatus}
@@ -639,7 +579,6 @@ function App() {
               groqInsight={groqInsight}
               groqStatus={groqStatus}
               askGroq={askGroq}
-              analyzeAnswersWithGroq={analyzeAnswersWithGroq}
             />
             <History sessions={sessions} />
           </section>
@@ -681,7 +620,6 @@ function MusicPanel(props) {
     songQuery,
     setSongQuery,
     musicOptions,
-    analyzeAnswersWithGroq,
     groqStatus,
     songs,
     songStatus,
@@ -723,9 +661,7 @@ function MusicPanel(props) {
       <div className="ai-options">
         <div className="ai-options-header">
           <strong>Groq music options</strong>
-          <button className="primary-action slim" onClick={analyzeAnswersWithGroq}>
-            <WandSparkles size={16} /> {groqStatus === 'loading' ? 'Analyzing...' : 'Analyze answers'}
-          </button>
+          <small>{groqStatus === 'loading' ? 'Updating...' : 'Auto analyzed'}</small>
         </div>
         <div className="option-stack">
           {musicOptions.map((option) => (
@@ -856,7 +792,7 @@ function TaskPanel(props) {
   );
 }
 
-function GroqPanel({ groqKey, setGroqKey, groqInsight, groqStatus, askGroq, analyzeAnswersWithGroq }) {
+function GroqPanel({ groqKey, setGroqKey, groqInsight, groqStatus, askGroq }) {
   return (
     <section className="grok-panel">
       <div className="section-heading">
@@ -868,9 +804,6 @@ function GroqPanel({ groqKey, setGroqKey, groqInsight, groqStatus, askGroq, anal
       </div>
       <div className="grok-form">
         <input type="password" value={groqKey} onChange={(event) => setGroqKey(event.target.value)} placeholder="Optional Groq API key" />
-        <button className="secondary-action" onClick={analyzeAnswersWithGroq}>
-          <Music2 size={18} /> Options
-        </button>
         <button className="primary-action" onClick={askGroq}>
           <WandSparkles size={18} /> {groqStatus === 'loading' ? 'Thinking...' : 'Ask Groq'}
         </button>

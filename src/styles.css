@@ -524,12 +524,6 @@ h1 {
   gap: 10px;
 }
 
-.primary-action.slim {
-  min-height: 38px;
-  padding: 0 12px;
-  font-size: 0.82rem;
-}
-
 .option-stack {
   display: grid;
   gap: 8px;
