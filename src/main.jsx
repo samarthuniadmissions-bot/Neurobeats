@@ -135,6 +135,36 @@ function buildSearchTerm(answers) {
   return terms.length ? terms.join(' ') : 'lofi focus instrumental';
 }
 
+function fallbackMusicOptions(quizAnswers) {
+  const task = quizAnswers.task;
+  const energy = quizAnswers.energy;
+  const lyrics = quizAnswers.lyrics;
+  const sound = quizAnswers.sound;
+  const instrumental = lyrics === 'none' ? 'instrumental ' : '';
+
+  if (task === 'memory') {
+    return [
+      { title: 'Ambient Recall', searchTerm: `${instrumental}ambient study music`, reason: 'Low-change textures help memory work without stealing attention.' },
+      { title: 'Minimal Piano', searchTerm: `${instrumental}minimal piano focus`, reason: 'Simple melodies create structure while keeping recall clean.' },
+      { title: 'Alpha Calm', searchTerm: 'alpha waves concentration', reason: 'A steady calm profile is useful for memorizing and review.' },
+    ];
+  }
+
+  if (task === 'reading') {
+    return [
+      { title: 'Clean Reading Flow', searchTerm: `${instrumental}piano reading focus`, reason: 'Gentle pacing supports comprehension and longer attention.' },
+      { title: 'Cinematic Desk', searchTerm: `${instrumental}cinematic ambient study`, reason: 'Wide sound works well when reading feels mentally flat.' },
+      { title: 'Brown Noise Baseline', searchTerm: 'brown noise focus', reason: 'A steady control-like option can reduce background distractions.' },
+    ];
+  }
+
+  return [
+    { title: energy === 'high' ? 'Fast Problem Sprint' : 'Lo-fi Problem Set', searchTerm: `${instrumental}${energy === 'high' ? 'electronic focus' : 'lofi focus beats'}`, reason: 'Rhythm can support momentum during repeated problem solving.' },
+    { title: 'Warm Beat Focus', searchTerm: `${instrumental}${sound === 'warm' ? 'warm lofi' : 'study beats'}`, reason: 'A warm repeating groove gives pace without needing lyrical attention.' },
+    { title: 'Control Track', searchTerm: 'instrumental concentration music', reason: 'A neutral option helps compare whether music is actually helping.' },
+  ];
+}
+
 function getRecommendation(sessions, taskType) {
   const relevant = sessions.filter((session) => session.taskType === taskType);
   if (relevant.length < 2) {
@@ -183,6 +213,7 @@ function App() {
   const [songs, setSongs] = useState([]);
   const [songStatus, setSongStatus] = useState('idle');
   const [songQuery, setSongQuery] = useState('');
+  const [musicOptions, setMusicOptions] = useState(() => fallbackMusicOptions({ task: 'math', energy: 'medium', lyrics: 'none', sound: 'warm' }));
   const [selectedSong, setSelectedSong] = useState(null);
   const [preMood, setPreMood] = useState(6);
   const [postMood, setPostMood] = useState(6);
@@ -206,6 +237,7 @@ function App() {
   const latest = sessions[0];
   const accuracy = answers.length ? Math.round((answers.filter((answer) => answer.correct).length / answers.length) * 100) : 0;
   const suggestedQuery = useMemo(() => buildSearchTerm(quizAnswers), [quizAnswers]);
+  const fallbackOptions = useMemo(() => fallbackMusicOptions(quizAnswers), [quizAnswers]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
@@ -308,6 +340,69 @@ function App() {
       setSongStatus(results.length ? 'ready' : 'empty');
     } catch {
       setSongStatus('error');
+    }
+  }
+
+  function applyMusicOptions(options, status = 'ready') {
+    setMusicOptions(options);
+    setGroqInsight(options.map((option) => `${option.title}: ${option.reason}`).join(' '));
+    setGroqStatus(status);
+  }
+
+  function parseGroqMusicOptions(text) {
+    const jsonMatch = text?.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return null;
+
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const options = parsed
+        .filter((option) => option.title && option.searchTerm && option.reason)
+        .slice(0, 5)
+        .map((option) => ({
+          title: String(option.title),
+          searchTerm: String(option.searchTerm),
+          reason: String(option.reason),
+        }));
+      return options.length ? options : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function analyzeAnswersWithGroq() {
+    if (!groqKey.trim()) {
+      applyMusicOptions(fallbackOptions, 'local');
+      return;
+    }
+
+    setGroqStatus('loading');
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${groqKey.trim()}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are NeuroBeat. Analyze study preference quiz answers and return only JSON. The JSON must be an array of 4 objects with title, searchTerm, and reason. searchTerm must be a concise iTunes music search query.',
+            },
+            {
+              role: 'user',
+              content: JSON.stringify({ quizAnswers, recentSessions: sessions.slice(0, 6) }),
+            },
+          ],
+          temperature: 0.7,
+        }),
+      });
+      const data = await response.json();
+      const text = data.choices?.[0]?.message?.content;
+      applyMusicOptions(parseGroqMusicOptions(text) || fallbackOptions, 'ready');
+    } catch {
+      applyMusicOptions(fallbackOptions, 'error');
     }
   }
 
@@ -504,6 +599,9 @@ function App() {
               searchSongs={searchSongs}
               songQuery={songQuery}
               setSongQuery={setSongQuery}
+              musicOptions={musicOptions}
+              analyzeAnswersWithGroq={analyzeAnswersWithGroq}
+              groqStatus={groqStatus}
               songs={songs}
               songStatus={songStatus}
               selectedSong={selectedSong}
@@ -541,6 +639,7 @@ function App() {
               groqInsight={groqInsight}
               groqStatus={groqStatus}
               askGroq={askGroq}
+              analyzeAnswersWithGroq={analyzeAnswersWithGroq}
             />
             <History sessions={sessions} />
           </section>
@@ -581,6 +680,9 @@ function MusicPanel(props) {
     searchSongs,
     songQuery,
     setSongQuery,
+    musicOptions,
+    analyzeAnswersWithGroq,
+    groqStatus,
     songs,
     songStatus,
     selectedSong,
@@ -595,7 +697,7 @@ function MusicPanel(props) {
         <Headphones size={22} />
         <div>
           <h2>Audio Personalization</h2>
-          <p>Answer the quiz, then choose generated audio or iTunes previews.</p>
+          <p>Answer the quiz, let Groq analyze it, then choose iTunes previews.</p>
         </div>
       </div>
 
@@ -616,6 +718,24 @@ function MusicPanel(props) {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="ai-options">
+        <div className="ai-options-header">
+          <strong>Groq music options</strong>
+          <button className="primary-action slim" onClick={analyzeAnswersWithGroq}>
+            <WandSparkles size={16} /> {groqStatus === 'loading' ? 'Analyzing...' : 'Analyze answers'}
+          </button>
+        </div>
+        <div className="option-stack">
+          {musicOptions.map((option) => (
+            <button key={`${option.title}-${option.searchTerm}`} className="music-option" onClick={() => searchSongs(option.searchTerm)}>
+              <span>{option.title}</span>
+              <small>{option.reason}</small>
+              <em>{option.searchTerm}</em>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="itunes-search">
@@ -736,18 +856,21 @@ function TaskPanel(props) {
   );
 }
 
-function GroqPanel({ groqKey, setGroqKey, groqInsight, groqStatus, askGroq }) {
+function GroqPanel({ groqKey, setGroqKey, groqInsight, groqStatus, askGroq, analyzeAnswersWithGroq }) {
   return (
     <section className="grok-panel">
       <div className="section-heading">
         <WandSparkles size={22} />
         <div>
           <h2>Groq AI Coach</h2>
-          <p>Use Groq to explain which music profile to test next.</p>
+          <p>Use Groq to analyze answers and generate music options.</p>
         </div>
       </div>
       <div className="grok-form">
         <input type="password" value={groqKey} onChange={(event) => setGroqKey(event.target.value)} placeholder="Optional Groq API key" />
+        <button className="secondary-action" onClick={analyzeAnswersWithGroq}>
+          <Music2 size={18} /> Options
+        </button>
         <button className="primary-action" onClick={askGroq}>
           <WandSparkles size={18} /> {groqStatus === 'loading' ? 'Thinking...' : 'Ask Groq'}
         </button>

@@ -507,6 +507,64 @@ h1 {
   margin: 18px 0;
 }
 
+.ai-options {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 14px;
+  background: rgba(23, 32, 29, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.ai-options-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.primary-action.slim {
+  min-height: 38px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+}
+
+.option-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.music-option {
+  display: grid;
+  gap: 5px;
+  min-height: 86px;
+  padding: 12px;
+  text-align: left;
+  color: var(--charcoal);
+  background: rgba(255, 250, 240, 0.76);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.music-option span {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 800;
+}
+
+.music-option small {
+  color: var(--muted);
+  line-height: 1.4;
+  font-weight: 700;
+}
+
+.music-option em {
+  color: var(--teal);
+  font-style: normal;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
 .search-line {
   gap: 8px;
   padding: 7px;
