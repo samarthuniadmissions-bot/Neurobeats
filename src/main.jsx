@@ -36,7 +36,10 @@ const USERS_KEY = 'neurobeat-users';
 const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || '';
 const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID || '';
 const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID || '';
+const EMAILJS_ADMIN_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_ADMIN_TEMPLATE_ID || EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY || '';
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || 'neurobeats.work@gmail.com';
+const PRIVACY_ACCEPTED_KEY = 'neurobeat-privacy-accepted';
 
 const navItems = [
   ['home', 'Home'],
@@ -317,6 +320,36 @@ function getShareText(session, insight = '') {
   return `My NeuroBeat session: ${session.taskName} | ${session.accuracy}/100 | ${formatSeconds(session.sessionLength)} | ${session.soundUsed} | Mood ${session.postMood}/10. ${insight}`.trim();
 }
 
+function getFeedbackSentiment(value) {
+  const text = value.toLowerCase();
+  if (/\b(didn'?t like|dont like|don't like|hate|bad|annoying|distract|too loud|stress|boring|not good)\b/.test(text)) return 'disliked';
+  if (/\b(liked|loved|great|good|helped|focused|calm|perfect|nice|amazing)\b/.test(text)) return 'liked';
+  return 'okay';
+}
+
+function buildFeedbackSearchFallback(feedback, session) {
+  const sentiment = getFeedbackSentiment(feedback);
+  const scoreBand = session.accuracy >= 80 ? 'deep focus' : session.accuracy >= 55 ? 'steady focus' : 'calm low distraction';
+  const languageTerm = session.languagePreference && session.languagePreference !== 'Any' ? `${session.languagePreference} music` : '';
+  const genreTerm = session.genres?.length ? session.genres.join(' ') : '';
+  const currentSound = session.soundUsed || '';
+  if (sentiment === 'liked') return [currentSound, genreTerm, languageTerm, scoreBand, 'similar instrumental variety'].filter(Boolean).join(' ');
+  if (sentiment === 'disliked') return [genreTerm, languageTerm, scoreBand, 'calm instrumental alternative focus'].filter(Boolean).join(' ');
+  return [genreTerm, languageTerm, scoreBand, 'balanced focus music'].filter(Boolean).join(' ');
+}
+
+async function fetchItunesSongs(term, { excludeTrackIds = [], avoidArtist = '' } = {}) {
+  const response = await fetch(`https://itunes.apple.com/search?${new URLSearchParams({ term, media: 'music', entity: 'song', limit: '24' })}`);
+  const data = await response.json();
+  const blocked = new Set(excludeTrackIds.map(String));
+  const blockedArtist = avoidArtist.toLowerCase();
+  return (data.results || [])
+    .filter((song) => song.previewUrl)
+    .filter((song) => !blocked.has(String(song.trackId)))
+    .filter((song) => !blockedArtist || song.artistName.toLowerCase() !== blockedArtist)
+    .slice(0, 12);
+}
+
 async function callGroq(messages, fallback) {
   if (!GROQ_KEY) return fallback;
   try {
@@ -337,6 +370,36 @@ async function sendEmailJS(templateParams) {
   return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams, EMAILJS_PUBLIC_KEY);
 }
 
+async function sendAuthEmail({ type, name, email }) {
+  const websiteLink = window.location.origin;
+  return sendEmailJS({
+    type,
+    name,
+    email,
+    user_name: name,
+    user_email: email,
+    website_link: websiteLink,
+    message: type === 'registration' ? 'Welcome to NeuroBeats' : 'NeuroBeats login',
+  });
+}
+
+async function sendAdminAuthEmail({ type, name, email }) {
+  if (!EMAILJS_SERVICE_ID || !EMAILJS_ADMIN_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) return { skipped: true };
+  const eventLabel = type === 'registration' ? 'signed up' : 'logged in';
+  return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_ADMIN_TEMPLATE_ID, {
+    type: `admin_${type}`,
+    name: 'NeuroBeats Admin',
+    email: ADMIN_EMAIL,
+    user_name: name,
+    user_email: email,
+    login_name: name,
+    login_email: email,
+    admin_email: ADMIN_EMAIL,
+    website_link: window.location.origin,
+    message: `${name} (${email}) ${eventLabel} to NeuroBeats at ${new Date().toLocaleString()}.`,
+  }, EMAILJS_PUBLIC_KEY);
+}
+
 function App() {
   const [page, setPage] = useState('home');
   const [authMode, setAuthMode] = useState('login');
@@ -344,6 +407,9 @@ function App() {
   const [sessions, setSessions] = useState(() => loadJSON(STORAGE_KEY, []));
   const [authMessage, setAuthMessage] = useState('');
   const [loginPrompt, setLoginPrompt] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(() => localStorage.getItem(PRIVACY_ACCEPTED_KEY) === 'true');
+  const [privacyScrolled, setPrivacyScrolled] = useState(false);
+  const [privacyChecked, setPrivacyChecked] = useState(false);
   const [role, setRole] = useState('Student');
   const [quizAnswers, setQuizAnswers] = useState(() => defaultAnswers('Student'));
   const [artistPreference, setArtistPreference] = useState('');
@@ -375,6 +441,7 @@ function App() {
   const [aiStatus, setAiStatus] = useState('idle');
   const [feedback, setFeedback] = useState('');
   const [feedbackInsight, setFeedbackInsight] = useState('');
+  const [feedbackSongs, setFeedbackSongs] = useState([]);
   const [feedbackStatus, setFeedbackStatus] = useState('idle');
   const songAudioRef = useRef(null);
   const synthAudioRef = useRef(null);
@@ -499,7 +566,16 @@ function App() {
     const name = String(form.get('name') || email.split('@')[0]);
     const password = String(form.get('password') || '');
     const confirmPassword = String(form.get('confirmPassword') || '');
+    const acceptedLegal = form.get('acceptedLegal') === 'on';
     const users = loadJSON(USERS_KEY, []);
+    if (!privacyAccepted) {
+      setAuthMessage('Please read and agree to the Privacy Policy popup before continuing.');
+      return;
+    }
+    if (!acceptedLegal) {
+      setAuthMessage('Please accept the Terms & Conditions and Privacy Policy to continue.');
+      return;
+    }
     if (!isValidEmail(email)) {
       setAuthMessage('Invalid email address.');
       return;
@@ -519,7 +595,8 @@ function App() {
       }
       const nextUsers = [...users, { email, name, password }];
       localStorage.setItem(USERS_KEY, JSON.stringify(nextUsers));
-      await sendEmailJS({ type: 'registration', user_name: name, user_email: email, message: 'New NeuroBeat registration' });
+      await sendAuthEmail({ type: 'registration', name, email });
+      await sendAdminAuthEmail({ type: 'registration', name, email });
       setUser({ email, name });
       setAuthMessage('Registration complete. You are signed in.');
       navigate('focus');
@@ -534,7 +611,8 @@ function App() {
       setAuthMessage('Incorrect password.');
       return;
     }
-    await sendEmailJS({ type: 'login', user_name: found.name, user_email: email, message: 'NeuroBeat login' });
+    await sendAuthEmail({ type: 'login', name: found.name, email });
+    await sendAdminAuthEmail({ type: 'login', name: found.name, email });
     setUser(found);
     setAuthMessage('Logged in successfully.');
     navigate('focus');
@@ -552,9 +630,7 @@ function App() {
       let results = [];
       let usedQuery = aiQuery;
       for (const term of searchTerms) {
-        const response = await fetch(`https://itunes.apple.com/search?${new URLSearchParams({ term, media: 'music', entity: 'song', limit: '12' })}`);
-        const data = await response.json();
-        results = (data.results || []).filter((song) => song.previewUrl);
+        results = await fetchItunesSongs(term);
         usedQuery = term;
         if (results.length) break;
       }
@@ -584,6 +660,7 @@ function App() {
     setAiInsight('');
     setFeedback('');
     setFeedbackInsight('');
+    setFeedbackSongs([]);
   }
 
   function recordAnswer(response) {
@@ -668,13 +745,54 @@ function App() {
   async function submitFeedback() {
     if (!latestSession || !feedback.trim()) return;
     setFeedbackStatus('loading');
-    const fallback = `Based on your feedback, try a calmer instrumental or ambient option next and compare it against ${latestSession.soundUsed}.`;
-    const analysis = await callGroq([
-      { role: 'system', content: 'Analyze user feedback after a focus session and recommend music for next time in two short sentences.' },
-      { role: 'user', content: JSON.stringify({ feedback, latestSession, sessions: sessions.slice(0, 5) }) },
-    ], fallback);
-    setFeedbackInsight(analysis);
-    setFeedbackStatus('ready');
+    setFeedbackSongs([]);
+    const sentiment = getFeedbackSentiment(feedback);
+    const selectedArtist = selectedSong?.artistName || '';
+    const avoidArtist = sentiment === 'disliked' ? selectedArtist : '';
+    const alreadySeenIds = [...new Set([...songs, ...feedbackSongs, selectedSong].filter(Boolean).map((song) => song.trackId))];
+    const fallbackQuery = buildFeedbackSearchFallback(feedback, latestSession);
+    try {
+      const aiQuery = await callGroq([
+        { role: 'system', content: 'Create one concise iTunes music search query based on feedback sentiment, score, task, mood, genres, language, and current sound. If the user disliked the sound, avoid the same artist/style and suggest an alternative mood or genre. If they liked it, suggest similar music but add variety. Return only 3 to 9 search keywords.' },
+        { role: 'user', content: JSON.stringify({ feedback, sentiment, score: latestSession.accuracy, task: latestSession.taskName, moodAfter: latestSession.postMood, soundUsed: latestSession.soundUsed, genres: latestSession.genres, languagePreference: latestSession.languagePreference }) },
+      ], fallbackQuery);
+      const cleanedQuery = aiQuery.replace(/["`]/g, '').replace(/\s+/g, ' ').trim() || fallbackQuery;
+      const sessionLanguage = latestSession.languagePreference && latestSession.languagePreference !== 'Any' ? latestSession.languagePreference : '';
+      const alternateQuery = sentiment === 'disliked' ? `${sessionLanguage} calm instrumental focus alternative` : `${cleanedQuery} fresh similar`;
+      const searchTerms = [...new Set([cleanedQuery, fallbackQuery, alternateQuery, `${cleanedQuery} focus playlist`].filter(Boolean))];
+      let freshSongs = [];
+      let usedFeedbackQuery = cleanedQuery;
+      for (const term of searchTerms) {
+        freshSongs = await fetchItunesSongs(term, { excludeTrackIds: alreadySeenIds, avoidArtist });
+        usedFeedbackQuery = term;
+        if (freshSongs.length) break;
+      }
+      const fallback = sentiment === 'liked'
+        ? `You scored ${latestSession.accuracy}/100 and liked the sound, so I found similar tracks with some variety. Fresh iTunes search: ${usedFeedbackQuery}.`
+        : sentiment === 'disliked'
+          ? `You scored ${latestSession.accuracy}/100 and did not enjoy the sound, so I avoided that track/artist and searched for a calmer alternative: ${usedFeedbackQuery}.`
+          : `Your feedback was mixed, so I balanced your ${latestSession.accuracy}/100 score with a fresh focus search: ${usedFeedbackQuery}.`;
+      const analysis = await callGroq([
+        { role: 'system', content: 'Write a personalized NeuroBeat feedback response in two short sentences. Mention how the feedback sentiment and score changed the next music recommendation. Do not repeat generic advice.' },
+        { role: 'user', content: JSON.stringify({ feedback, sentiment, latestSession, usedFeedbackQuery, freshSongCount: freshSongs.length }) },
+      ], fallback);
+      setFeedbackInsight(analysis);
+      setFeedbackSongs(freshSongs);
+      if (freshSongs.length) {
+        setSongs(freshSongs);
+        setSelectedSong(freshSongs[0]);
+        setProfileId('itunes');
+        setSongQuery(usedFeedbackQuery);
+        setSongStatus('ready');
+      } else {
+        setSongStatus('empty');
+      }
+      setFeedbackStatus('ready');
+    } catch {
+      setFeedbackInsight('I could not fetch fresh recommendations this time. Try adding a little more detail about what felt good or distracting.');
+      setSongStatus('error');
+      setFeedbackStatus('ready');
+    }
   }
 
   async function downloadCard() {
@@ -739,6 +857,8 @@ function App() {
     how: <InfoPage title="How It Works" items={['Choose your role, genres, and optional artist preference.', 'Run a short focus task while the selected audio plays.', 'Rate your mood after the test.', 'Generate an AI Insight card and submit feedback for better recommendations.']} />,
     about: <AboutPage />,
     contact: <ContactPage />,
+    privacy: <PrivacyPolicyPage />,
+    terms: <TermsPage />,
     history: <HistoryPage user={user} sessions={userSessions} goAuth={goAuth} navigate={navigate} shareSession={shareSession} deleteSessions={deleteSessions} openSession={openSession} />,
     focus: (
       <FocusPage
@@ -803,14 +923,18 @@ function App() {
         feedback={feedback}
         setFeedback={setFeedback}
         feedbackInsight={feedbackInsight}
+        feedbackSongs={feedbackSongs}
         feedbackStatus={feedbackStatus}
         submitFeedback={submitFeedback}
+        setSelectedSong={setSelectedSong}
+        setProfileId={setProfileId}
+        setAudioOn={setAudioOn}
       />
     ),
     results: <ResultsPage sessions={userSessions} navigate={navigate} />,
     feedback: <FeedbackPage navigate={navigate} />,
-    login: <AuthView mode="login" setMode={goAuth} onSubmit={handleAuth} message={authMessage} />,
-    signup: <AuthView mode="signup" setMode={goAuth} onSubmit={handleAuth} message={authMessage} />,
+    login: <AuthView mode="login" setMode={goAuth} navigate={navigate} onSubmit={handleAuth} message={authMessage} />,
+    signup: <AuthView mode="signup" setMode={goAuth} navigate={navigate} onSubmit={handleAuth} message={authMessage} />,
   };
 
   return (
@@ -827,6 +951,19 @@ function App() {
         onEnded={() => setAudioOn(false)}
       />
       {loginPrompt ? <LoginModal close={() => setLoginPrompt(false)} goAuth={goAuth} /> : null}
+      {!user && !privacyAccepted && ['login', 'signup'].includes(page) ? (
+        <PrivacyGateModal
+          scrolled={privacyScrolled}
+          checked={privacyChecked}
+          setChecked={setPrivacyChecked}
+          onScrollComplete={() => setPrivacyScrolled(true)}
+          onAgree={() => {
+            localStorage.setItem(PRIVACY_ACCEPTED_KEY, 'true');
+            setPrivacyAccepted(true);
+            setAuthMessage('');
+          }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -868,6 +1005,28 @@ function HomePage({ navigate }) {
         <Metric label="Working" value="Test → Mood → Insight" />
         <Metric label="Owner" value="Samarth" />
       </div>
+      <div className="home-section">
+        <span className="eyebrow"><Check size={16} /> Features</span>
+        <h2>Built for personal focus experiments</h2>
+        <div className="home-card-grid">
+          <article><Headphones size={24} /><h3>Audio personalization</h3><p>Choose role, genre, language or region, artist, and natural-language prompts for better music matches.</p></article>
+          <article><Target size={24} /><h3>Timed focus games</h3><p>Play math, memory recall, and missing-icon memory tasks while the selected sound runs in the background.</p></article>
+          <article><WandSparkles size={24} /><h3>AI focus receipts</h3><p>After each session, Groq turns score, time, mood, and sound into a shareable insight card.</p></article>
+        </div>
+      </div>
+      <div className="home-section home-steps">
+        <span className="eyebrow"><Activity size={16} /> How It Works</span>
+        <h2>From music choice to measurable insight</h2>
+        <div className="step-grid">
+          <article><strong>01</strong><h3>Personalize sound</h3><p>Answer quick role-based questions and optionally add artist, genre, or language preferences.</p></article>
+          <article><strong>02</strong><h3>Run the focus test</h3><p>Complete a timed task while the selected iTunes preview or focus sound plays without pausing.</p></article>
+          <article><strong>03</strong><h3>Save mood and results</h3><p>Record how you feel after the session so the recommendation learns from both performance and mood.</p></article>
+          <article><strong>04</strong><h3>Review history</h3><p>Open, share, or delete saved sessions from History when you are logged in.</p></article>
+        </div>
+      </div>
+      <div className="home-section about-strip">
+        <AboutStory />
+      </div>
       <div className="testimonial">“NeuroBeat made focus feel measurable instead of random.”</div>
     </section>
   );
@@ -883,7 +1042,28 @@ function InfoPage({ title, items }) {
 }
 
 function AboutPage() {
-  return <InfoPage title="About Us" items={['NeuroBeat is built to make focus recommendations personal, measurable, and practical.', 'The product combines timed tasks, mood ratings, music previews, and AI summaries.', 'Owner: Samarth. Built in India for learners, teachers, employees, and creators.']} />;
+  return <section className="content-page about-page"><AboutStory /></section>;
+}
+
+function AboutStory() {
+  return (
+    <div className="about-story">
+      <div className="about-photo-frame">
+        <img src="/samarth-nathani.png" alt="Samarth Nathani" />
+      </div>
+      <div className="about-copy">
+        <h2>Samarth Nathani</h2>
+        <h3>How was this idea created?</h3>
+        <p>NeuroBeat began with a simple question: why does the same music help one person focus, but distract another? Instead of guessing, the platform tests sound, task performance, time, and mood together.</p>
+        <p>The idea grew from everyday study sessions where focus felt inconsistent. Sometimes calm music helped, sometimes silence worked better, and sometimes a stronger rhythm made difficult tasks easier to start.</p>
+        <p>NeuroBeat turns that experience into a measurable system: users choose music, complete short focus games, record mood, and receive personalized AI insights backed by their own session data.</p>
+        <div className="vision-card">
+          <strong>Vision:</strong>
+          <p>Build a platform where people discover their best focus sound through evidence, personalization, and repeated self-testing.</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ContactPage() {
@@ -895,7 +1075,103 @@ function ContactPage() {
   );
 }
 
-function AuthView({ mode, setMode, onSubmit, message }) {
+function PrivacyPolicyPage() {
+  return (
+    <section className="content-page policy-page">
+      <span className="eyebrow"><Lock size={16} /> Privacy Policy</span>
+      <h1>Privacy Policy</h1>
+      <p>Last updated: July 23, 2026</p>
+      <div className="policy-grid">
+        <article>
+          <h2>1. What NeuroBeat Collects</h2>
+          <p>NeuroBeat may store your name, email, password for this demo login system, role selection, genre and language preferences, selected audio, focus-task answers, score, session length, mood ratings, AI insight text, and written feedback.</p>
+        </article>
+        <article>
+          <h2>2. Why This Data Is Used</h2>
+          <p>Your data is used to run focus tests, calculate performance, personalize music recommendations, generate AI insight cards, show session history, and improve future recommendations based on your feedback and score.</p>
+        </article>
+        <article>
+          <h2>3. Local Browser Storage</h2>
+          <p>Account and session history are stored in your browser using localStorage. This means your saved sessions stay on the same browser and device unless you clear browser data or delete sessions from History.</p>
+        </article>
+        <article>
+          <h2>4. Third-Party Services</h2>
+          <p>EmailJS may receive registration or login event details when configured. Groq may receive session details and feedback to create insights and recommendations. The iTunes API receives music search terms to return song previews.</p>
+        </article>
+        <article>
+          <h2>5. AI Insights And Feedback</h2>
+          <p>When you generate an AI insight or submit feedback, the app may send your score, task type, mood, sound used, preferences, and feedback text to Groq so it can produce a personalized response.</p>
+        </article>
+        <article>
+          <h2>6. Sharing And Downloads</h2>
+          <p>If you share an insight card or session, the shared content may include your task, score, session length, sound used, mood, and AI insight. Downloaded cards are saved by you as image files.</p>
+        </article>
+        <article>
+          <h2>7. Deleting Data</h2>
+          <p>You can delete individual sessions or selected sessions from the History page. You can also clear all locally stored NeuroBeat data by clearing your browser site data.</p>
+        </article>
+        <article>
+          <h2>8. Contact</h2>
+          <p>For privacy questions, contact NeuroBeat at neurobeat@example.com. Location: India.</p>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function TermsPage() {
+  return (
+    <section className="content-page policy-page">
+      <span className="eyebrow"><Check size={16} /> Terms and Conditions</span>
+      <h1>Terms and Conditions</h1>
+      <p>Last updated: July 23, 2026</p>
+      <div className="policy-grid">
+        <article>
+          <h2>1. Acceptance Of Terms</h2>
+          <p>By using NeuroBeat, you agree to use the platform responsibly and follow these terms. If you do not agree, please do not use the website.</p>
+        </article>
+        <article>
+          <h2>2. Purpose Of NeuroBeat</h2>
+          <p>NeuroBeat is an experimental focus-testing platform. It provides music recommendations, timed tasks, mood tracking, feedback analysis, and AI-generated insights for personal use.</p>
+        </article>
+        <article>
+          <h2>3. Accounts</h2>
+          <p>Some features, including focus tests, history, and AI insight cards, require login or sign up. You are responsible for entering accurate account information and keeping your browser/device secure.</p>
+        </article>
+        <article>
+          <h2>4. AI Recommendations</h2>
+          <p>AI insights and music recommendations are generated from your session data and feedback. They are suggestions only and may not always be accurate, complete, or suitable for every person.</p>
+        </article>
+        <article>
+          <h2>5. Music And iTunes Previews</h2>
+          <p>Music results are provided through the iTunes API. NeuroBeat does not own the songs, artwork, artist names, previews, or external music metadata returned by iTunes.</p>
+        </article>
+        <article>
+          <h2>6. User Feedback</h2>
+          <p>When you submit feedback, NeuroBeat may use it with your score, mood, and sound choice to generate new recommendations. Please do not submit harmful, private, or inappropriate content.</p>
+        </article>
+        <article>
+          <h2>7. No Medical Or Academic Guarantee</h2>
+          <p>NeuroBeat is not medical, psychological, or academic advice. It does not guarantee improved focus, grades, productivity, mood, or performance.</p>
+        </article>
+        <article>
+          <h2>8. Changes To The Service</h2>
+          <p>NeuroBeat may be updated, changed, or temporarily unavailable at any time. Features may change as the platform improves.</p>
+        </article>
+        <article>
+          <h2>9. Limitation Of Liability</h2>
+          <p>Use NeuroBeat at your own discretion. NeuroBeat is not responsible for losses, decisions, or outcomes based on AI insights, recommendations, or session results.</p>
+        </article>
+        <article>
+          <h2>10. Contact</h2>
+          <p>For questions about these terms, contact NeuroBeat at neurobeat@example.com. Location: India.</p>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function AuthView({ mode, setMode, navigate, onSubmit, message }) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const passwordType = showPassword ? 'text' : 'password';
@@ -925,6 +1201,15 @@ function AuthView({ mode, setMode, onSubmit, message }) {
             </button>
           </label>
         ) : null}
+        <label className="legal-consent">
+          <input name="acceptedLegal" type="checkbox" />
+          <span>
+            I agree to the{' '}
+            <button type="button" onClick={() => navigate('terms')}>Terms & Conditions</button>
+            {' '}and{' '}
+            <button type="button" onClick={() => navigate('privacy')}>Privacy Policy</button>.
+          </span>
+        </label>
         <button className="primary-action" type="submit">{mode === 'login' ? 'Login' : 'Sign Up'} <ChevronRight size={18} /></button>
         <button className="text-action" type="button" onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}>
           {mode === 'login' ? 'Need an account? Sign up' : 'Already have an account? Login'}
@@ -1126,6 +1411,18 @@ function InsightAndFeedback(props) {
         <textarea value={props.feedback} onChange={(event) => props.setFeedback(event.target.value)} placeholder="How did the music feel? Were you focused, distracted, calm, energized, or tired?" />
         <button className="primary-action" onClick={props.submitFeedback}>{props.feedbackStatus === 'loading' ? 'Analyzing...' : 'Submit Feedback'}</button>
         {props.feedbackInsight ? <p className="feedback-result">{props.feedbackInsight}</p> : null}
+        {props.feedbackSongs?.length ? (
+          <div className="feedback-song-list">
+            <strong>Fresh recommendations from your feedback</strong>
+            {props.feedbackSongs.slice(0, 6).map((song) => (
+              <article key={song.trackId}>
+                <img src={song.artworkUrl100} alt="" />
+                <div><span>{song.trackName}</span><small>{song.artistName}</small></div>
+                <button onClick={() => { props.setSelectedSong(song); props.setProfileId('itunes'); props.setAudioOn(true); }}><Play size={15} /> Play</button>
+              </article>
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -1213,10 +1510,42 @@ function LoginModal({ close, goAuth }) {
   return <div className="modal-backdrop"><div className="modal-card"><h2>Login required</h2><p>AI Insight cards are available only to logged-in users.</p><div className="hero-actions"><button className="primary-action" onClick={() => { close(); goAuth('login'); }}>Log In</button><button className="secondary-action" onClick={() => { close(); goAuth('signup'); }}>Sign Up</button></div><button className="text-action" onClick={close}>Close</button></div></div>;
 }
 
+function PrivacyGateModal({ scrolled, checked, setChecked, onScrollComplete, onAgree }) {
+  function handleScroll(event) {
+    const element = event.currentTarget;
+    if (element.scrollTop + element.clientHeight >= element.scrollHeight - 12) onScrollComplete();
+  }
+  const canAgree = scrolled && checked;
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-card privacy-gate-card">
+        <h2>Privacy Policy Agreement</h2>
+        <p>You need to read and agree to the Privacy Policy before logging in or signing up.</p>
+        <div className="privacy-scroll-box" onScroll={handleScroll}>
+          <h3>NeuroBeats Privacy Policy</h3>
+          <p>NeuroBeats stores your account and session details in this browser so the app can run focus tests, save session history, and personalize recommendations.</p>
+          <p>We may use your name, email, role, genre and language preferences, selected audio, focus-game answers, score, session length, mood ratings, AI insight text, and written feedback.</p>
+          <p>EmailJS may receive registration or login event details when configured. Groq may receive session details and feedback to generate AI insights and recommendation text. The iTunes API receives music search terms to return song previews.</p>
+          <p>Your session history is stored locally in your browser. You can delete saved sessions from the History page or clear browser site data to remove locally stored account/session information.</p>
+          <p>If you share an insight card or session, it may include your task, score, session length, sound used, mood, and AI-generated insight. Downloaded cards are saved by you as image files.</p>
+          <p>NeuroBeats is an experimental focus platform. It is not medical, psychological, or academic advice, and it does not guarantee improved focus, productivity, grades, or mood.</p>
+          <p>Contact: neurobeat@example.com. Location: India.</p>
+          <strong>End of Privacy Policy</strong>
+        </div>
+        <label className="legal-consent privacy-gate-consent">
+          <input type="checkbox" checked={checked} disabled={!scrolled} onChange={(event) => setChecked(event.target.checked)} />
+          <span>{scrolled ? 'I have read and agree with the Privacy Policy.' : 'Scroll to the bottom to enable this checkbox.'}</span>
+        </label>
+        <button className="primary-action" disabled={!canAgree} onClick={onAgree}>Agree and continue</button>
+      </div>
+    </div>
+  );
+}
+
 function Footer({ navigate }) {
   return (
     <footer className="footer">
-      <div><h3>Quick Links</h3>{[['home', 'Home'], ['about', 'About'], ['focus', 'Focus Test'], ['results', 'Results'], ['history', 'History'], ['feedback', 'Feedback']].map(([id, label]) => <button key={id} onClick={() => navigate(id)}>{label}</button>)}</div>
+      <div><h3>Quick Links</h3>{[['home', 'Home'], ['about', 'About'], ['focus', 'Focus Test'], ['results', 'Results'], ['history', 'History'], ['feedback', 'Feedback'], ['privacy', 'Privacy Policy'], ['terms', 'Terms and Conditions']].map(([id, label]) => <button key={id} onClick={() => navigate(id)}>{label}</button>)}</div>
       <div><h3>Contact</h3><p>neurobeat@example.com</p><p>India</p></div>
       <div><h3>Social Links</h3><a href="https://github.com/samarthuniadmissions-bot/Neurobeats" target="_blank" rel="noreferrer"><Share2 size={16} /> GitHub</a><a href="https://www.linkedin.com" target="_blank" rel="noreferrer"><Share2 size={16} /> LinkedIn</a><a href="https://twitter.com" target="_blank" rel="noreferrer"><Share2 size={16} /> Twitter</a><a href="https://www.instagram.com" target="_blank" rel="noreferrer"><Share2 size={16} /> Instagram</a></div>
       <p className="copyright">© 2026 NeuroBeat. All Rights Reserved.</p>
