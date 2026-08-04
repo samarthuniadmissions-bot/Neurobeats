@@ -73,6 +73,24 @@ const taskTypes = [
   { id: 'icons', name: 'Missing Icon Memory', icon: Activity, prompt: 'Spot the hidden symbol' },
 ];
 
+const taskGames = {
+  math: [
+    { id: 'math-sort', name: 'Speed Sort', prompt: 'Solve each equation, then sort the result into EVEN or ODD', mode: 'sort', trials: [{ q: '8 x 7', a: 'even' }, { q: '13 + 18', a: 'odd' }, { q: '96 / 6', a: 'even' }, { q: '27 - 8', a: 'odd' }, { q: '14 x 9', a: 'even' }, { q: '125 - 42', a: 'odd' }, { q: '18 x 7', a: 'even' }, { q: '144 / 9 + 5', a: 'odd' }] },
+    { id: 'math-bonds', name: 'Number Bonds Rush', prompt: 'Tap numbers that pair with one already seen to reach 100', mode: 'bonds', trials: [{ q: '37', a: 'skip' }, { q: '52', a: 'skip' }, { q: '63', a: 'pair' }, { q: '48', a: 'pair' }, { q: '18', a: 'skip' }, { q: '82', a: 'pair' }, { q: '44', a: 'skip' }, { q: '56', a: 'pair' }, { q: '25', a: 'skip' }, { q: '75', a: 'pair' }] },
+    { id: 'math-sequence', name: 'Number patterns', prompt: 'Choose the missing number in each sequence', trials: [{ q: '2, 4, 6, 8, ?', a: '10', mode: 'choice', options: ['10', '12', '14', '16'] }, { q: '5, 10, 15, 20, ?', a: '25', mode: 'choice', options: ['20', '25', '30', '35'] }, { q: '3, 6, 12, 24, ?', a: '48', mode: 'choice', options: ['36', '42', '48', '54'] }, { q: '30, 25, 20, 15, ?', a: '10', mode: 'choice', options: ['5', '10', '12', '15'] }, { q: '1, 4, 9, 16, ?', a: '25', mode: 'choice', options: ['20', '24', '25', '36'] }, { q: '2, 6, 18, 54, ?', a: '162', mode: 'choice', options: ['108', '144', '162', '216'] }] },
+  ],
+  memory: [
+    { id: 'memory-keywords', name: 'Keyword chain', prompt: 'Recall the previous 4-character keyword', trials: [{ q: 'K7Q2', a: null, intro: true }, { q: 'M4P9', a: 'K7Q2' }, { q: 'A8T3', a: 'M4P9' }, { q: 'R2N6', a: 'A8T3' }, { q: 'L5X1', a: 'R2N6' }, { q: 'C9V4', a: 'L5X1' }] },
+    { id: 'memory-reverse', name: 'Reverse recall', prompt: 'Remember the previous keyword in reverse', trials: [{ q: 'B6R2', a: null, intro: true }, { q: 'P8L4', a: '2R6B' }, { q: 'N3W7', a: '4L8P' }, { q: 'T5C9', a: '7W3N' }, { q: 'H1D6', a: '9C5T' }, { q: 'F4S8', a: '6D1H' }] },
+    { id: 'memory-rapid', name: 'Rapid recognition', prompt: 'Choose the previous keyword under time pressure', trials: [{ q: 'Q2M8', a: null, intro: true }, { q: 'V7K1', a: 'Q2M8', mode: 'choice', options: ['Q2M8', 'Q8M2', 'M2Q8', 'Q2N8'] }, { q: 'J4R6', a: 'V7K1', mode: 'choice', options: ['V7K1', 'V1K7', 'K7V1', 'V7L1'] }, { q: 'Z9P3', a: 'J4R6', mode: 'choice', options: ['J4R6', 'J6R4', 'R4J6', 'J4P6'] }, { q: 'W5A2', a: 'Z9P3', mode: 'choice', options: ['Z9P3', 'Z3P9', 'P9Z3', 'Z9R3'] }, { q: 'G8T4', a: 'W5A2', mode: 'choice', options: ['W5A2', 'W2A5', 'A5W2', 'W5B2'] }] },
+  ],
+  icons: [
+    { id: 'icons-missing', name: 'Missing icon', prompt: 'Find the icon hidden from the grid', count: 5 },
+    { id: 'icons-speed', name: 'Speed icon recall', prompt: 'Find the missing icon in fewer rounds', count: 4 },
+    { id: 'icons-focus', name: 'Focused icon recall', prompt: 'Remember a larger set of visual symbols', count: 6 },
+  ],
+};
+
 const roleOptions = ['Student', 'Teacher', 'Employee', 'Creator', 'Other'];
 const genreOptions = ['Pop', 'Hip-Hop', 'Rock', 'Classical', 'Jazz', 'Electronic', 'Ambient', 'Lo-fi'];
 const languageOptions = ['Any', 'English', 'Hindi', 'Bengali', 'Tamil', 'Telugu', 'Punjabi', 'Korean', 'Japanese', 'Spanish', 'French', 'Arabic'];
@@ -310,10 +328,10 @@ async function extractMusicSearchTerm(prompt, fallbackTerm, languagePreference =
   return extracted.replace(/["`]/g, '').replace(/\s+/g, ' ').trim().split(/\s+/).slice(0, 8).join(' ') || fallback;
 }
 
-function getTimeAdjustedPercent(taskType, correct, total, elapsed) {
+function getTimeAdjustedPercent(taskType, correct, total, elapsed, gameVariant = '') {
   if (!total) return 0;
   const rawPercent = (correct / total) * 100;
-  const targetSeconds = { math: 6, memory: 5, icons: 7 }[taskType];
+  const targetSeconds = gameVariant === 'math-sort' ? 3.5 : { math: 6, memory: 5, icons: 7 }[taskType];
   return Math.max(0, Math.round(rawPercent - Math.max(0, elapsed / total - targetSeconds) * 3.5));
 }
 
@@ -321,7 +339,18 @@ function shuffleItems(items) {
   return [...items].sort(() => Math.random() - 0.5);
 }
 
-function generateIconTrials(count = 5) {
+function generateIconTrials(count = 5, mode = 'missing') {
+  if (mode === 'position') return Array.from({ length: count }, (_, index) => {
+    const grid = shuffleItems(iconPool).slice(0, 9);
+    const targetIndex = Math.floor(Math.random() * grid.length);
+    return { q: `Position round ${index + 1}`, a: String(targetIndex + 1), grid, missingIndex: targetIndex, mode, target: grid[targetIndex], options: shuffleItems(Array.from({ length: 9 }, (_, cell) => String(cell + 1))) };
+  });
+  if (mode === 'odd') return Array.from({ length: count }, (_, index) => {
+    const common = shuffleItems(iconPool)[0];
+    const odd = shuffleItems(iconPool.filter((item) => item.icon !== common.icon))[0];
+    const grid = shuffleItems(Array.from({ length: 8 }, () => common).concat(odd));
+    return { q: `Odd-one-out round ${index + 1}`, a: odd.icon, grid, missingIndex: -1, mode, options: shuffleItems([odd, common, ...shuffleItems(iconPool.filter((item) => item.icon !== odd.icon && item.icon !== common.icon)).slice(0, 4)]) };
+  });
   return Array.from({ length: count }, (_, index) => {
     const grid = shuffleItems(iconPool).slice(0, 9);
     const missingIndex = Math.floor(Math.random() * grid.length);
@@ -333,12 +362,15 @@ function generateIconTrials(count = 5) {
       grid,
       missingIndex,
       options: shuffleItems([answer, ...distractors]),
+      mode,
     };
   });
 }
 
-function createTrials(taskType) {
-  return taskType === 'icons' ? generateIconTrials() : baseTrials[taskType];
+function createTrials(taskType, gameId) {
+  const game = taskGames[taskType]?.find((item) => item.id === gameId) || taskGames[taskType]?.[0];
+  if (taskType === 'icons') return generateIconTrials(game?.count || 5, game?.id === 'icons-speed' ? 'position' : game?.id === 'icons-focus' ? 'odd' : 'missing');
+  return game?.trials || baseTrials[taskType];
 }
 
 function formatSeconds(seconds) {
@@ -524,10 +556,11 @@ function App() {
   const [selectedSong, setSelectedSong] = useState(null);
   const [profileId, setProfileId] = useState('lofi');
   const [taskType, setTaskType] = useState('math');
+  const [gameVariant, setGameVariant] = useState('math-sort');
   const [preMood, setPreMood] = useState(6);
   const [postMood, setPostMood] = useState(6);
   const [phase, setPhase] = useState('setup');
-  const [activeTrials, setActiveTrials] = useState(() => createTrials('math'));
+  const [activeTrials, setActiveTrials] = useState(() => createTrials('math', 'math-sort'));
   const [trialIndex, setTrialIndex] = useState(0);
   const [iconMemorizing, setIconMemorizing] = useState(false);
   const [answers, setAnswers] = useState([]);
@@ -553,7 +586,7 @@ function App() {
   const trials = activeTrials;
   const userSessions = user ? sessions.filter((session) => !session.userEmail || session.userEmail === user.email) : [];
   const correctAnswers = answers.filter((answer) => answer.correct).length;
-  const currentScore = getTimeAdjustedPercent(taskType, correctAnswers, answers.length, elapsed);
+  const currentScore = getTimeAdjustedPercent(taskType, correctAnswers, answers.length, elapsed, gameVariant);
   const suggestedQuery = useMemo(() => buildSearchTerm(role, quizAnswers, artistPreference, genres, languagePreference), [role, quizAnswers, artistPreference, genres, languagePreference]);
   const [musicOptions, setMusicOptions] = useState(() => fallbackMusicOptions(role, quizAnswers, artistPreference, genres, languagePreference));
   const [musicOptionsStatus, setMusicOptionsStatus] = useState('idle');
@@ -563,8 +596,8 @@ function App() {
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions)), [sessions]);
 
   useEffect(() => {
-    if (phase === 'setup') setActiveTrials(createTrials(taskType));
-  }, [phase, taskType]);
+    if (phase === 'setup') setActiveTrials(createTrials(taskType, gameVariant));
+  }, [phase, taskType, gameVariant]);
 
   useEffect(() => {
     let cancelled = false;
@@ -773,7 +806,7 @@ function App() {
       setLoginPrompt(true);
       return;
     }
-    setActiveTrials(createTrials(taskType));
+    setActiveTrials(createTrials(taskType, gameVariant));
     setAnswers([]);
     setTrialIndex(0);
     setCurrentAnswer('');
@@ -821,7 +854,9 @@ function App() {
       userEmail: user.email,
       sessionLength: elapsed,
       taskType,
-      taskName: taskTypes.find((task) => task.id === taskType).name,
+      taskName: taskGames[taskType].find((game) => game.id === gameVariant)?.name || taskTypes.find((task) => task.id === taskType).name,
+      taskCategory: taskTypes.find((task) => task.id === taskType).name,
+      gameVariant,
       profileId,
       soundUsed: selectedSong ? `${selectedSong.trackName} by ${selectedSong.artistName}` : selectedProfile.name,
       role,
@@ -832,7 +867,7 @@ function App() {
       preMood,
       postMood,
       rawAccuracy,
-      accuracy: getTimeAdjustedPercent(taskType, correct, answers.length, elapsed),
+      accuracy: getTimeAdjustedPercent(taskType, correct, answers.length, elapsed, gameVariant),
       averageSeconds: Math.max(1, elapsed / Math.max(1, answers.length)),
       answers,
     };
@@ -1024,6 +1059,8 @@ function App() {
         selectedProfile={selectedProfile}
         taskType={taskType}
         setTaskType={setTaskType}
+        gameVariant={gameVariant}
+        setGameVariant={setGameVariant}
         preMood={preMood}
         setPreMood={setPreMood}
         postMood={postMood}
@@ -1347,15 +1384,8 @@ function AboutPage() {
 function AboutStory() {
   return (
     <div className="about-block">
-      <span className="eyebrow about-eyebrow">
-        <Activity size={16} />
-        <img src="/user.png" alt="" aria-hidden="true" />
-        About Us
-      </span>
+      <span className="eyebrow about-eyebrow">Founder</span>
       <div className="about-story">
-        <div className="about-photo-frame">
-          <img src="/samarth-nathani.png" alt="Samarth Nathani" />
-        </div>
         <div className="about-copy">
           <h2>Samarth Nathani</h2>
           <h3>How was this idea created?</h3>
@@ -1551,15 +1581,27 @@ function FocusPage(props) {
   );
 }
 
-function TaskSelector({ taskType, setTaskType, isGameActive }) {
-  return <div className="segmented">{taskTypes.map((task) => {
+function TaskSelector({ taskType, setTaskType, gameVariant, setGameVariant, isGameActive }) {
+  const availableGames = taskGames[taskType] || [];
+  return <div className="task-selector"><div className="segmented">{taskTypes.map((task) => {
     const Icon = task.icon;
-    return <button key={task.id} className={taskType === task.id ? 'active' : ''} onClick={() => setTaskType(task.id)} disabled={isGameActive}><Icon size={17} /><span>{task.name}</span></button>;
-  })}</div>;
+    return <button key={task.id} className={taskType === task.id ? 'active' : ''} onClick={() => { setTaskType(task.id); setGameVariant(taskGames[task.id]?.[0]?.id); }} disabled={isGameActive}><Icon size={17} /><span>{task.name}</span></button>;
+  })}</div><div className="game-choices"><strong>Choose a game</strong><div>{availableGames.map((game) => <button key={game.id} className={gameVariant === game.id ? 'selected' : ''} onClick={() => setGameVariant(game.id)} disabled={isGameActive}><span>{game.name}</span><small>{game.prompt}</small></button>)}</div></div></div>;
 }
 
 function MusicPanel(props) {
-  const visibleQuestions = [...roleQuestions[props.role], ...sharedQuestions];
+  const [roleSearch, setRoleSearch] = useState(props.role);
+  const [showRoleSuggestions, setShowRoleSuggestions] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const visibleQuestions = [...(roleQuestions[props.role] || roleQuestions.Other), ...sharedQuestions];
+  const roleSuggestions = roleSearch.trim()
+    ? roleOptions.filter((role) => role.toLowerCase().includes(roleSearch.trim().toLowerCase()))
+    : roleOptions;
+  function updateRole(value) {
+    setRoleSearch(value);
+    props.setRole(value || 'Other');
+    if (roleOptions.includes(value)) props.setQuizAnswers(defaultAnswers(value));
+  }
   function toggleGenre(genre) {
     props.setGenres(props.genres.includes(genre) ? props.genres.filter((item) => item !== genre) : [...props.genres, genre]);
   }
@@ -1572,16 +1614,24 @@ function MusicPanel(props) {
   }
   return (
     <div className="sound-panel">
-      <div className="section-heading"><Headphones size={22} /><div><h2>Audio Personalization</h2><p>Role, artist, and genres are optional helpers for better recommendations.</p></div></div>
+      <div className="section-heading"><Headphones size={22} /><div><h2>Choose your sound</h2><p>Start with your mood and let Groq personalize the music for your focus task.</p></div></div>
       {props.isGameActive ? <div className="music-lock">⚠️ You cannot change or pause the song while the game is running.</div> : null}
+      <div className="audio-mood-summary"><div><strong>Current mood</strong><span>Groq uses this to shape your recommendations</span></div><b>{props.preMood}/10</b></div>
+      <div className="role-input-section">
+        <strong>Select your role</strong>
+        <div className="role-input-wrap">
+          <input value={roleSearch} onFocus={() => setShowRoleSuggestions(true)} onBlur={() => window.setTimeout(() => setShowRoleSuggestions(false), 150)} onChange={(event) => { updateRole(event.target.value); setShowRoleSuggestions(true); }} placeholder="Type Student, Teacher, Employee..." disabled={props.isGameActive} aria-label="Select your role" />
+          {showRoleSuggestions && roleSuggestions.length ? <div className="role-suggestions">{roleSuggestions.map((role) => <button key={role} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { updateRole(role); setShowRoleSuggestions(false); }}>{role}</button>)}</div> : null}
+        </div>
+        <small>Choose a role or type your own. Groq uses it to personalize the questions and music options.</small>
+      </div>
       <div className="quiz-stack">
-        <div className="quiz-question"><strong>Select your role</strong><div className="role-row">{roleOptions.map((role) => <button key={role} className={props.role === role ? 'selected' : ''} onClick={() => { props.setRole(role); props.setQuizAnswers(defaultAnswers(role)); }} disabled={props.isGameActive}>{role}</button>)}</div></div>
-        {visibleQuestions.map(([id, question, options]) => <div className="quiz-question" key={id}><strong>{question}</strong><div className="choice-row">{options.map((option) => <button key={option} className={props.quizAnswers[id] === option ? 'selected' : ''} onClick={() => props.setQuizAnswers({ ...props.quizAnswers, [id]: option })} disabled={props.isGameActive}>{option}</button>)}</div></div>)}
+        <button className={`advanced-toggle ${showAdvanced ? 'open' : ''}`} type="button" onClick={() => setShowAdvanced((value) => !value)} disabled={props.isGameActive}><span><SlidersHorizontal size={17} /> More personalization <small>optional</small></span><ChevronRight size={17} /></button>
+        {showAdvanced ? <div className="advanced-personalization">{visibleQuestions.map(([id, question, options]) => <div className="quiz-question" key={id}><strong>{question}</strong><div className="choice-row">{options.map((option) => <button key={option} className={props.quizAnswers[id] === option ? 'selected' : ''} onClick={() => props.setQuizAnswers({ ...props.quizAnswers, [id]: option })} disabled={props.isGameActive}>{option}</button>)}</div></div>)}
         <label className="artist-field"><strong>Preferred artist <span>optional</span></strong><div className="artist-autocomplete"><input value={props.artistPreference} onChange={(event) => props.setArtistPreference(event.target.value)} placeholder="Example: FrankJavCee or songs like Hans Zimmer for calm focus" disabled={props.isGameActive} />{props.artistStatus === 'loading' ? <div className="artist-menu"><span>Searching artists...</span></div> : null}{props.artistSuggestions.length ? <div className="artist-menu">{props.artistSuggestions.map((artist) => <button key={artist.artistId} onClick={() => { props.setArtistPreference(artist.artistName); props.setArtistSuggestions([]); }}>{artist.artistName}</button>)}</div> : null}</div></label>
         <div className="genre-field"><strong>Preferred genres <span>optional</span></strong><div className="genre-row">{genreOptions.map((genre) => <button key={genre} className={props.genres.includes(genre) ? 'selected' : ''} onClick={() => toggleGenre(genre)} disabled={props.isGameActive}>{genre}</button>)}</div></div>
-        <label className="language-field"><strong>Language / Region <span>optional</span></strong><select value={props.languagePreference} onChange={(event) => props.setLanguagePreference(event.target.value)} disabled={props.isGameActive}>{languageOptions.map((language) => <option key={language} value={language}>{language}</option>)}</select></label>
+        <label className="language-field"><strong>Language / Region <span>optional</span></strong><select value={props.languagePreference} onChange={(event) => props.setLanguagePreference(event.target.value)} disabled={props.isGameActive}>{languageOptions.map((language) => <option key={language} value={language}>{language}</option>)}</select></label><div className="ai-options"><div className="ai-options-header"><strong>Music options</strong><small>{props.musicOptionsStatus === 'loading' ? 'Groq is personalizing...' : 'Groq personalized'}</small></div><div className="option-stack">{props.musicOptions.map((option) => <button key={`${option.title}-${option.searchTerm}`} className="music-option" onClick={() => props.searchSongs(option.searchTerm, true)} disabled={props.isGameActive}><span>{option.title}</span><small>{option.reason}</small><em>{option.searchTerm}</em></button>)}</div></div></div> : null}
       </div>
-      <div className="ai-options"><div className="ai-options-header"><strong>Music options</strong><small>{props.musicOptionsStatus === 'loading' ? 'Groq is personalizing...' : 'Groq personalized'}</small></div><div className="option-stack">{props.musicOptions.map((option) => <button key={`${option.title}-${option.searchTerm}`} className="music-option" onClick={() => props.searchSongs(option.searchTerm, true)} disabled={props.isGameActive}><span>{option.title}</span><small>{option.reason}</small><em>{option.searchTerm}</em></button>)}</div></div>
       <div className="itunes-search"><div className="search-line"><Search size={18} /><input value={props.songQuery} onChange={(event) => props.setSongQuery(event.target.value)} placeholder={props.suggestedQuery} disabled={props.isGameActive} /><button onClick={() => props.searchSongs(props.songQuery || props.suggestedQuery)} disabled={props.isGameActive}>Find</button></div><button className="secondary-action" onClick={() => props.searchSongs(props.suggestedQuery)} disabled={props.isGameActive}><Music2 size={18} /> Get iTunes options</button><small>{props.songStatus === 'loading' ? 'AI is extracting music keywords and searching iTunes...' : props.songStatus === 'ready' ? `Searched iTunes for: ${props.songQuery}` : `Suggested search: ${props.suggestedQuery}`}</small></div>
       <div className="profile-grid compact">{audioProfiles.map((profile) => <button key={profile.id} className={`profile-card ${props.profileId === profile.id ? 'selected' : ''}`} onClick={() => props.setProfileId(profile.id)} disabled={props.isGameActive} style={{ '--profile-color': profile.color }}><div className="profile-topline"><span>{profile.name}</span>{props.profileId === profile.id ? <Check size={18} /> : null}</div><p>{profile.label}</p></button>)}</div>
       <div className="song-grid">{props.songs.map((song) => <article key={song.trackId} className={`song-card ${props.selectedSong?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt="" /><button className="song-select" onClick={() => { props.setSelectedSong(song); props.setProfileId('itunes'); }} disabled={props.isGameActive}><span>{song.trackName}</span><small>{song.artistName}</small></button><button className="song-play" onClick={() => toggleSong(song)} disabled={props.isGameActive}>{props.selectedSong?.trackId === song.trackId && props.audioOn ? <Pause size={16} /> : <Play size={16} />}</button></article>)}{props.songStatus === 'empty' ? <p className="muted">No preview tracks found. Try another artist, genre, or search term.</p> : null}</div>
@@ -1628,11 +1678,39 @@ function TaskPanel(props) {
           <IconMemoryGame trial={trial} memorizing={props.iconMemorizing} submitIconAnswer={props.submitIconAnswer} />
         </div>
       ) : null}
-      {props.phase === 'testing' && props.taskType !== 'icons' ? <form className="test-card" onSubmit={props.submitAnswer}><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>{props.taskType === 'memory' ? <div className="memory-prompt"><span>{trial.intro ? 'First keyword' : 'New keyword'}</span><strong>{trial.q}</strong><p>{trial.intro ? 'Remember this keyword. On the next screen, type this previous keyword.' : 'Type the previous keyword, not the one shown above.'}</p></div> : <h3>{trial.q}</h3>}{props.taskType === 'memory' && trial.intro ? null : <input autoFocus value={props.currentAnswer} onChange={(event) => props.setCurrentAnswer(event.target.value)} placeholder={props.taskType === 'memory' ? 'Previous keyword' : 'Answer'} />}<button className="primary-action" type="submit">{props.taskType === 'memory' && trial.intro ? 'Start recall' : 'Submit'} <ChevronRight size={18} /></button></form> : null}
+      {props.phase === 'testing' && props.taskType === 'math' && props.gameVariant === 'math-sort' ? <div className="test-card speed-sort-card"><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div><SortGame trial={trial} recordAnswer={props.submitIconAnswer} /></div> : null}
+      {props.phase === 'testing' && props.taskType !== 'icons' && trial.mode === 'choice' ? <div className="test-card"><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div><ChoiceGame trial={trial} submitAnswer={props.submitAnswer} recordAnswer={props.submitIconAnswer} /></div> : null}
+      {props.phase === 'testing' && props.taskType === 'math' && props.gameVariant === 'math-bonds' ? <div className="test-card bond-test-card"><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div><BondGame trial={trial} recordAnswer={props.submitIconAnswer} /></div> : null}
+      {props.phase === 'testing' && props.taskType !== 'icons' && !(props.taskType === 'math' && ['math-sort', 'math-bonds'].includes(props.gameVariant)) && trial.mode !== 'choice' ? <form className="test-card" onSubmit={props.submitAnswer}><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>{props.taskType === 'memory' ? <div className="memory-prompt"><span>{trial.intro ? 'First keyword' : 'New keyword'}</span><strong>{trial.q}</strong><p>{trial.intro ? 'Remember this keyword. On the next screen, type this previous keyword.' : 'Type the previous keyword, not the one shown above.'}</p></div> : <h3>{trial.q}</h3>}{props.taskType === 'memory' && trial.intro ? null : <input autoFocus value={props.currentAnswer} onChange={(event) => props.setCurrentAnswer(event.target.value)} placeholder={props.taskType === 'memory' ? 'Previous keyword' : 'Answer'} />}<button className="primary-action" type="submit">{props.taskType === 'memory' && trial.intro ? 'Start recall' : 'Submit'} <ChevronRight size={18} /></button></form> : null}
       {props.phase === 'post' ? <div className="test-card"><div className="score-orb">{props.currentScore}%</div><h3>Post-session mood</h3><p>This score includes accuracy and a time penalty. Record your current mood before saving.</p><MoodSlider label="After" value={props.postMood} onChange={props.setPostMood} /><button className="primary-action" onClick={props.saveSession}>Save result <BarChart3 size={18} /></button></div> : null}
       {props.phase === 'results' && props.latestSession ? <div className="test-card results-card"><div className="score-row"><Metric label="Score" value={`${props.latestSession.accuracy}%`} /><Metric label="Session" value={formatSeconds(props.latestSession.sessionLength)} /><Metric label="Mood" value={`${props.latestSession.postMood}/10`} /></div><h3>Session complete</h3><p>Generate a logged-in AI Insight card or share feedback below.</p><button className="secondary-action" onClick={props.startTest}><RefreshCw size={18} /> Run another test</button></div> : null}
     </div>
   );
+}
+
+function ChoiceGame({ trial, recordAnswer }) {
+  return <div className="choice-game"><h3>{trial.q}</h3><p className="muted">Choose the best answer.</p><div className="choice-game-options">{trial.options.map((option) => <button key={option} type="button" onClick={() => recordAnswer(option)}>{option}</button>)}</div></div>;
+}
+
+function SortGame({ trial, recordAnswer }) {
+  const touchStart = useRef(null);
+  function choose(value) {
+    recordAnswer(value);
+  }
+  function handleTouchStart(event) {
+    touchStart.current = event.changedTouches[0].clientX;
+  }
+  function handleTouchEnd(event) {
+    if (touchStart.current === null) return;
+    const distance = event.changedTouches[0].clientX - touchStart.current;
+    touchStart.current = null;
+    if (Math.abs(distance) > 45) choose(distance < 0 ? 'even' : 'odd');
+  }
+  return <div className="sort-game" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}><span className="sort-instruction">Solve mentally, then tap or swipe</span><div className="sort-equation">{trial.q}</div><div className="sort-zones"><button className="sort-zone even" type="button" onClick={() => choose('even')}><strong>EVEN</strong><small>Tap or swipe left</small></button><button className="sort-zone odd" type="button" onClick={() => choose('odd')}><strong>ODD</strong><small>Tap or swipe right</small></button></div></div>;
+}
+
+function BondGame({ trial, recordAnswer }) {
+  return <div className="bond-game"><span className="sort-instruction">Target sum</span><div className="bond-target">100</div><p className="muted">Does <strong>{trial.q}</strong> pair with a number you have already seen to make 100?</p><div className="bond-actions"><button className="bond-action pair" type="button" onClick={() => recordAnswer('pair')}><strong>PAIR</strong><small>Tap if its complement was seen</small></button><button className="bond-action skip" type="button" onClick={() => recordAnswer('skip')}><strong>SKIP</strong><small>Tap if no pair exists yet</small></button></div></div>;
 }
 
 function IconMemoryGame({ trial, memorizing, submitIconAnswer }) {
@@ -1640,31 +1718,27 @@ function IconMemoryGame({ trial, memorizing, submitIconAnswer }) {
     <div className="icon-memory-game">
       <div className={`icon-game-status ${memorizing ? 'memorize' : 'recall'}`}>
         <Clock3 size={18} />
-        <strong>{memorizing ? 'Memorize these icons for 5 seconds' : 'Find the missing icon'}</strong>
+        <strong>{memorizing ? 'Memorize this visual challenge for 5 seconds' : trial.mode === 'position' ? 'Which cell held the target icon?' : trial.mode === 'odd' ? 'Find the odd icon' : 'Find the missing icon'}</strong>
       </div>
       <div className="icon-grid" aria-label="Icon memory grid">
         {trial.grid.map((item, index) => {
-          const hidden = !memorizing && index === trial.missingIndex;
+          const hidden = !memorizing && trial.mode === 'missing' && index === trial.missingIndex;
           return <div key={`${item.icon}-${index}`} className={`icon-cell ${hidden ? 'missing' : ''}`}>{hidden ? '?' : item.icon}</div>;
         })}
       </div>
-      <p className="muted">{memorizing ? 'Remember every icon and where it appears.' : 'Which icon disappeared from the grid?'}</p>
+      <p className="muted">{memorizing ? 'Remember the icons and their positions.' : trial.mode === 'position' ? `Target icon: ${trial.target.icon}` : trial.mode === 'odd' ? 'Which icon is different from the rest?' : 'Which icon disappeared from the grid?'}</p>
       {!memorizing ? (
         <div className="missing-options">
-          {trial.options.map((option) => <button key={option.icon} type="button" onClick={() => submitIconAnswer(option.icon)} aria-label={option.label}>{option.icon}</button>)}
+          {trial.options.map((option) => <button key={option.icon || option} type="button" onClick={() => submitIconAnswer(option.icon || option)} aria-label={option.label || `Cell ${option}`}>{trial.mode === 'position' ? `Cell ${option}` : option.icon}</button>)}
         </div>
       ) : null}
     </div>
   );
 }
 
-function EmptyTask({ selectedProfile, selectedSong, taskType, startTest }) {
-  const guide = {
-    math: 'Solve short arithmetic and type only the final number.',
-    memory: 'First remember a 4-character keyword. Then type the previous keyword on each next screen.',
-    icons: 'Memorize a 3x3 icon grid for 5 seconds. Then choose the missing icon from 6 options.',
-  }[taskType];
-  return <div className="test-card empty-task"><div className="score-orb small"><Headphones size={28} /></div><h3>{selectedProfile.id === 'itunes' && selectedSong ? selectedSong.trackName : selectedProfile.name} ready</h3><div className="how-to-play"><strong>How the test works</strong><span>1. Choose your sound and task.</span><span>2. {guide}</span><span>3. Work quickly, because score decreases when average answer time is too slow.</span><span>4. Record mood after the session for the AI summary.</span></div><button className="primary-action" onClick={startTest}><Play size={18} /> Begin trial</button></div>;
+function EmptyTask({ selectedProfile, selectedSong, taskType, gameVariant, startTest }) {
+  const selectedGame = taskGames[taskType]?.find((game) => game.id === gameVariant) || taskGames[taskType]?.[0];
+  return <div className="test-card empty-task"><div className="score-orb small"><Headphones size={28} /></div><h3>{selectedGame?.name || (selectedProfile.id === 'itunes' && selectedSong ? selectedSong.trackName : selectedProfile.name)} ready</h3><div className="how-to-play"><strong>How the test works</strong><span>1. Choose your sound and game.</span><span>2. {selectedGame?.prompt}</span><span>3. Work quickly, because score decreases when average answer time is too slow.</span><span>4. Record mood after the session for the AI summary.</span></div><button className="primary-action" onClick={startTest}><Play size={18} /> Begin trial</button></div>;
 }
 
 function InsightAndFeedback(props) {
