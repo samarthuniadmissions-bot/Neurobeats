@@ -7,6 +7,7 @@ import {
   BarChart3,
   Brain,
   Check,
+   ChevronDown,
   ChevronRight,
   Clock3,
   Download,
@@ -48,14 +49,17 @@ const LEGACY_STORAGE_KEYS = {
   [PRIVACY_ACCEPTED_KEY]: 'neuro' + 'beat-privacy-accepted',
 };
 
-const navItems = [
+const primaryNavItems = [
   ['home', 'Home'],
+  ['focus', 'Focus Test'],
+  ['history', 'History'],
+];
+
+const moreNavItems = [
   ['features', 'Features'],
   ['how', 'How It Works'],
   ['about', 'About Us'],
-  ['focus', 'Focus Test'],
   ['results', 'Results'],
-  ['history', 'History'],
   ['contact', 'Contact'],
 ];
 
@@ -81,13 +85,13 @@ const taskGames = {
   ],
   memory: [
     { id: 'memory-keywords', name: 'Keyword chain', prompt: 'Recall the previous 4-character keyword', trials: [{ q: 'K7Q2', a: null, intro: true }, { q: 'M4P9', a: 'K7Q2' }, { q: 'A8T3', a: 'M4P9' }, { q: 'R2N6', a: 'A8T3' }, { q: 'L5X1', a: 'R2N6' }, { q: 'C9V4', a: 'L5X1' }] },
-    { id: 'memory-reverse', name: 'Reverse recall', prompt: 'Remember the previous keyword in reverse', trials: [{ q: 'B6R2', a: null, intro: true }, { q: 'P8L4', a: '2R6B' }, { q: 'N3W7', a: '4L8P' }, { q: 'T5C9', a: '7W3N' }, { q: 'H1D6', a: '9C5T' }, { q: 'F4S8', a: '6D1H' }] },
-    { id: 'memory-rapid', name: 'Rapid recognition', prompt: 'Choose the previous keyword under time pressure', trials: [{ q: 'Q2M8', a: null, intro: true }, { q: 'V7K1', a: 'Q2M8', mode: 'choice', options: ['Q2M8', 'Q8M2', 'M2Q8', 'Q2N8'] }, { q: 'J4R6', a: 'V7K1', mode: 'choice', options: ['V7K1', 'V1K7', 'K7V1', 'V7L1'] }, { q: 'Z9P3', a: 'J4R6', mode: 'choice', options: ['J4R6', 'J6R4', 'R4J6', 'J4P6'] }, { q: 'W5A2', a: 'Z9P3', mode: 'choice', options: ['Z9P3', 'Z3P9', 'P9Z3', 'Z9R3'] }, { q: 'G8T4', a: 'W5A2', mode: 'choice', options: ['W5A2', 'W2A5', 'A5W2', 'W5B2'] }] },
+    { id: 'memory-category-sort', name: 'Category Sort Recall', prompt: 'Watch a stream of words, then answer gist questions about what you saw', trials: [] },
+   { id: 'memory-spatial', name: 'Spatial-Verbal Combo', prompt: 'Watch words appear around the screen, then recall where each one was', trials: [] },
   ],
-  icons: [
+ icons: [
     { id: 'icons-missing', name: 'Missing icon', prompt: 'Find the icon hidden from the grid', count: 5 },
-    { id: 'icons-speed', name: 'Speed icon recall', prompt: 'Find the missing icon in fewer rounds', count: 4 },
-    { id: 'icons-focus', name: 'Focused icon recall', prompt: 'Remember a larger set of visual symbols', count: 6 },
+    { id: 'icons-color-match', name: 'Icon-Color Matching', prompt: 'Remember which color each icon was paired with', trials: [] },
+    { id: 'icons-category-count', name: 'Category Count-in-Grid', prompt: 'View a mixed icon grid, then answer gist questions about what you saw', trials: [] },
   ],
 };
 
@@ -367,12 +371,221 @@ function generateIconTrials(count = 5, mode = 'missing') {
   });
 }
 
-function createTrials(taskType, gameId) {
-  const game = taskGames[taskType]?.find((item) => item.id === gameId) || taskGames[taskType]?.[0];
-  if (taskType === 'icons') return generateIconTrials(game?.count || 5, game?.id === 'icons-speed' ? 'position' : game?.id === 'icons-focus' ? 'odd' : 'missing');
-  return game?.trials || baseTrials[taskType];
+const categoryWordPool = {
+  animal: ['TIGER', 'EAGLE', 'WHALE', 'FALCON', 'PANTHER', 'DOLPHIN', 'ZEBRA', 'OTTER'],
+  object: ['CHAIR', 'LAMP', 'PENCIL', 'KETTLE', 'MIRROR', 'BASKET', 'ANCHOR', 'LANTERN'],
+  color: ['BLUE', 'GREEN', 'AMBER', 'VIOLET', 'CORAL', 'TEAL', 'IVORY', 'CRIMSON'],
+};
+
+function numericOptions(correct) {
+  const candidates = new Set([correct, correct + 1, Math.max(1, correct - 1), correct + 2]);
+  return shuffleItems([...candidates]).map(String).slice(0, 4);
 }
 
+function generateCategoryStreamTrials() {
+  const counts = { animal: 4, object: 3, color: 3 };
+  const chosen = {};
+  const usedWords = new Set();
+  Object.keys(categoryWordPool).forEach((category) => {
+    const picks = shuffleItems(categoryWordPool[category]).slice(0, counts[category]);
+    chosen[category] = picks;
+    picks.forEach((word) => usedWords.add(word));
+  });
+
+  const streamWords = shuffleItems(
+    Object.keys(chosen).flatMap((category) => chosen[category].map((word) => ({ word, category })))
+  );
+  const streamTrials = streamWords.map((item, index) => ({
+    q: item.word,
+    a: null,
+    intro: true,
+    stream: true,
+    category: item.category,
+    streamIndex: index + 1,
+    streamTotal: streamWords.length,
+  }));
+
+  const lurePool = Object.keys(categoryWordPool).flatMap((category) =>
+    categoryWordPool[category].filter((word) => !usedWords.has(word))
+  );
+  const lures = shuffleItems(lurePool).slice(0, 2);
+  const allCategoriesFlat = Object.keys(chosen);
+  const seenWord = shuffleItems(chosen[allCategoriesFlat[Math.floor(Math.random() * allCategoriesFlat.length)]])[0];
+
+  const questionTrials = [
+    { q: `Was "${seenWord}" in the word stream?`, a: 'yes', mode: 'gist', gistType: 'seen', options: ['Yes', 'No'] },
+    { q: `Was "${lures[0]}" in the word stream?`, a: 'no', mode: 'gist', gistType: 'seen', options: ['Yes', 'No'] },
+    { q: 'How many animal words appeared?', a: String(counts.animal), mode: 'gist', gistType: 'count', options: numericOptions(counts.animal) },
+    { q: 'How many color words appeared?', a: String(counts.color), mode: 'gist', gistType: 'count', options: numericOptions(counts.color) },
+    {
+      q: 'Which of these words was NOT in the stream?',
+      a: lures[1],
+      mode: 'gist',
+      gistType: 'oddOne',
+      options: shuffleItems([lures[1], ...shuffleItems([...chosen.animal, ...chosen.object, ...chosen.color]).slice(0, 3)]),
+    },
+  ];
+
+  return [...streamTrials, ...questionTrials];
+}
+
+const spatialWordPool = ['NOVA', 'ECHO', 'LUNA', 'CORE', 'AXIS', 'GLOW', 'RUSH', 'VOID', 'SPARK', 'DRIFT'];
+const spatialPositions = ['top-left', 'top-right', 'center', 'bottom-left', 'bottom-right'];
+
+function formatPositionLabel(position) {
+  return position === 'center' ? 'center' : `${position.replace('-', ' ')} corner`;
+}
+
+function generateSpatialTrials() {
+  const words = shuffleItems(spatialWordPool).slice(0, 5);
+  const positions = shuffleItems(spatialPositions);
+  const pairs = words.map((word, index) => ({ word, position: positions[index] }));
+
+  const streamTrials = pairs.map((pair, index) => ({
+    q: pair.word,
+    a: null,
+    intro: true,
+    stream: true,
+    spatial: true,
+    position: pair.position,
+    streamIndex: index + 1,
+    streamTotal: pairs.length,
+  }));
+
+  const locateQuestions = shuffleItems(pairs).slice(0, 3).map((pair) => ({
+    q: `Where did "${pair.word}" appear?`,
+    a: pair.position,
+    mode: 'spatial-locate',
+    options: spatialPositions,
+  }));
+
+  const recallQuestions = shuffleItems(pairs).slice(0, 2).map((pair) => ({
+    q: `Which word appeared in the ${formatPositionLabel(pair.position)}?`,
+    a: pair.word,
+    mode: 'spatial-recall',
+    targetPosition: pair.position,
+    options: shuffleItems([pair.word, ...shuffleItems(words.filter((word) => word !== pair.word)).slice(0, 3)]),
+  }));
+
+  return [...streamTrials, ...shuffleItems([...locateQuestions, ...recallQuestions])];
+}
+
+const colorPalette = [
+  { name: 'Ocean Blue', hex: '#2e6f95' },
+  { name: 'Sunset Orange', hex: '#d97a3f' },
+  { name: 'Forest Green', hex: '#3f7d52' },
+  { name: 'Blush Pink', hex: '#c96b8a' },
+  { name: 'Golden Yellow', hex: '#c9a227' },
+  { name: 'Violet Mist', hex: '#7d5fa6' },
+];
+
+function generateIconColorTrials() {
+  const icons = shuffleItems(iconPool).slice(0, 5);
+  const colors = shuffleItems(colorPalette).slice(0, 5);
+  const pairs = icons.map((item, index) => ({ icon: item.icon, label: item.label, color: colors[index] }));
+
+  const streamTrials = pairs.map((pair, index) => ({
+    q: pair.icon,
+    a: null,
+    intro: true,
+    stream: true,
+    iconColor: true,
+    icon: pair.icon,
+    iconLabel: pair.label,
+    color: pair.color,
+    streamIndex: index + 1,
+    streamTotal: pairs.length,
+  }));
+
+  const colorRecallQuestions = shuffleItems(pairs).slice(0, 3).map((pair) => ({
+    q: 'What color was paired with this icon?',
+    icon: pair.icon,
+    a: pair.color.name,
+    mode: 'color-recall',
+    options: shuffleItems([pair.color, ...shuffleItems(colors.filter((color) => color.name !== pair.color.name)).slice(0, 3)]),
+  }));
+
+  const iconRecallQuestions = shuffleItems(pairs).slice(0, 2).map((pair) => ({
+    q: 'Which icon was paired with this color?',
+    color: pair.color,
+    a: pair.icon,
+    mode: 'icon-recall',
+    options: shuffleItems([pair.icon, ...shuffleItems(icons.map((item) => item.icon).filter((icon) => icon !== pair.icon)).slice(0, 3)]),
+  }));
+
+  return [...streamTrials, ...shuffleItems([...colorRecallQuestions, ...iconRecallQuestions])];
+}
+
+const categoryIconPool = {
+  animal: [
+    { icon: '🐶', label: 'dog' },
+    { icon: '🐱', label: 'cat' },
+    { icon: '🦋', label: 'butterfly' },
+  ],
+  food: [
+    { icon: '🍎', label: 'apple' },
+    { icon: '🍕', label: 'pizza' },
+    { icon: '☕', label: 'coffee' },
+  ],
+  tech: [
+    { icon: '📷', label: 'camera' },
+    { icon: '🎧', label: 'headphones' },
+    { icon: '🚀', label: 'rocket' },
+    { icon: '💡', label: 'light bulb' },
+  ],
+};
+
+const categoryLureIcons = [
+  { icon: '⭐', label: 'star' }, { icon: '🌙', label: 'moon' }, { icon: '❤️', label: 'heart' },
+  { icon: '🌳', label: 'tree' }, { icon: '🌍', label: 'globe' }, { icon: '☀️', label: 'sun' },
+  { icon: '📚', label: 'books' }, { icon: '🧠', label: 'brain' }, { icon: '⚽', label: 'football' },
+  { icon: '🎹', label: 'piano' }, { icon: '🎯', label: 'target' }, { icon: '🌊', label: 'wave' },
+  { icon: '🍀', label: 'clover' }, { icon: '🛸', label: 'ufo' }, { icon: '🎈', label: 'balloon' },
+  { icon: '🎵', label: 'music note' }, { icon: '🚗', label: 'car' }, { icon: '🏀', label: 'basketball' },
+];
+
+function generateIconCategoryGridTrials() {
+  const counts = { animal: 3, food: 3, tech: 4 };
+  const chosen = {};
+  Object.keys(categoryIconPool).forEach((category) => {
+    chosen[category] = shuffleItems(categoryIconPool[category]).slice(0, counts[category]);
+  });
+  const gridItems = shuffleItems(
+    Object.keys(chosen).flatMap((category) => chosen[category].map((item) => ({ ...item, category })))
+  );
+
+  const viewTrial = { q: 'Category grid view', a: null, intro: true, gridView: true, grid: gridItems, viewSeconds: 6 };
+
+  const seenItem = shuffleItems(gridItems)[0];
+  const lureItem = shuffleItems(categoryLureIcons)[0];
+  const lureItem2 = shuffleItems(categoryLureIcons.filter((item) => item.icon !== lureItem.icon))[0];
+
+  const questionTrials = [
+    { q: 'Did you see this icon in the grid?', promptIcon: seenItem.icon, a: 'yes', mode: 'visual-gist', gistType: 'seen', options: ['Yes', 'No'] },
+    { q: 'Did you see this icon in the grid?', promptIcon: lureItem.icon, a: 'no', mode: 'visual-gist', gistType: 'seen', options: ['Yes', 'No'] },
+    { q: 'How many animal icons appeared?', a: String(counts.animal), mode: 'visual-gist', gistType: 'count', options: numericOptions(counts.animal) },
+    { q: 'How many tech icons appeared?', a: String(counts.tech), mode: 'visual-gist', gistType: 'count', options: numericOptions(counts.tech) },
+    {
+      q: 'Which icon was NOT in the grid?',
+      a: lureItem2.icon,
+      mode: 'visual-gist',
+      gistType: 'oddOne',
+      options: shuffleItems([lureItem2, ...shuffleItems(gridItems).slice(0, 3)]).map((item) => item.icon),
+    },
+  ];
+
+  return [viewTrial, ...questionTrials];
+}
+
+function createTrials(taskType, gameId) {
+  const game = taskGames[taskType]?.find((item) => item.id === gameId) || taskGames[taskType]?.[0];
+  if (taskType === 'icons' && game?.id === 'icons-color-match') return generateIconColorTrials();
+  if (taskType === 'icons' && game?.id === 'icons-category-count') return generateIconCategoryGridTrials();
+  if (taskType === 'icons') return generateIconTrials(game?.count || 5, 'missing');
+  if (taskType === 'memory' && game?.id === 'memory-category-sort') return generateCategoryStreamTrials();
+  if (taskType === 'memory' && game?.id === 'memory-spatial') return generateSpatialTrials();
+  return game?.trials || baseTrials[taskType];
+}
 function formatSeconds(seconds) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
@@ -617,15 +830,15 @@ function App() {
     };
   }, [role, quizAnswers, artistPreference, genres, languagePreference, taskType, preMood, userSessions.length]);
 
-  useEffect(() => {
-    if (phase !== 'testing' || taskType !== 'icons') {
+useEffect(() => {
+    if (phase !== 'testing' || taskType !== 'icons' || gameVariant === 'icons-color-match' || gameVariant === 'icons-category-count') {
       setIconMemorizing(false);
       return undefined;
     }
     setIconMemorizing(true);
     const timeout = window.setTimeout(() => setIconMemorizing(false), 5000);
     return () => window.clearTimeout(timeout);
-  }, [phase, taskType, trialIndex]);
+  }, [phase, taskType, gameVariant, trialIndex]);
 
   useEffect(() => {
     if (!startedAt || phase !== 'testing') return undefined;
@@ -820,10 +1033,15 @@ function App() {
     setFeedbackSongs([]);
   }
 
-  function recordAnswer(response) {
+ function recordAnswer(response) {
     const trial = trials[trialIndex];
-    if (taskType === 'memory' && trial.intro) {
-      setTrialIndex(1);
+    if (trial.intro) {
+      if (trialIndex + 1 >= trials.length) {
+        setAudioOn(false);
+        setPhase('post');
+        return;
+      }
+      setTrialIndex(trialIndex + 1);
       return;
     }
     if (taskType === 'icons' && iconMemorizing) return;
@@ -1136,11 +1354,55 @@ function App() {
 }
 
 function Nav({ page, navigate, goAuth, user, setUser }) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef(null);
+  const isMoreActive = moreNavItems.some(([id]) => id === page);
+
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+    function handleClickOutside(event) {
+      if (moreRef.current && !moreRef.current.contains(event.target)) setMoreOpen(false);
+    }
+    function handleEscape(event) {
+      if (event.key === 'Escape') setMoreOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [moreOpen]);
+
+  function goTo(id) {
+    setMoreOpen(false);
+    navigate(id);
+  }
+
   return (
     <nav className="top-nav">
       <button className="brand" onClick={() => navigate('home')}><span className="brand-mark"><Brain size={22} /></span><span>Neurobeats</span></button>
       <div className="nav-links">
-        {navItems.map(([id, label]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}>{label}</button>)}
+        {primaryNavItems.map(([id, label]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}>{label}</button>)}
+        <div className="nav-more" ref={moreRef}>
+          <button
+            className={`nav-more-trigger ${isMoreActive ? 'active' : ''}`}
+            onClick={() => setMoreOpen((value) => !value)}
+            aria-haspopup="true"
+            aria-expanded={moreOpen}
+          >
+            More <ChevronDown size={15} className={moreOpen ? 'nav-more-caret open' : 'nav-more-caret'} />
+          </button>
+          {moreOpen ? (
+            <div className="nav-more-menu" role="menu">
+              {moreNavItems.map(([id, label]) => (
+                <button key={id} className={page === id ? 'active' : ''} onClick={() => goTo(id)} role="menuitem">
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
       <div className="auth-actions">
         {user ? <button className="user-pill" onClick={() => setUser(null)}>{user.name} · Logout</button> : (
@@ -1153,7 +1415,6 @@ function Nav({ page, navigate, goAuth, user, setUser }) {
     </nav>
   );
 }
-
 function HomePage({ navigate }) {
   return (
     <section className="landing">
@@ -1558,7 +1819,7 @@ function AuthView({ mode, setMode, navigate, onSubmit, message }) {
 
 function FocusPage(props) {
   return (
-    <>
+    <div className="focus-page">
       <section className="hero focus-hero">
         <div className="hero-copy">
           <span className="eyebrow"><Headphones size={16} /> Focus Test</span>
@@ -1567,20 +1828,48 @@ function FocusPage(props) {
         </div>
         <FocusSignal profile={props.selectedProfile} audioOn={props.audioOn} song={props.selectedSong} />
       </section>
-      <section className="control-band">
-        <Panel title="Task" icon={Target}><TaskSelector {...props} /></Panel>
-        <Panel title="Mood" icon={Activity}><MoodSlider label="Before" value={props.preMood} onChange={props.setPreMood} />{props.phase !== 'setup' ? <MoodSlider label="After" value={props.postMood} onChange={props.setPostMood} /> : null}</Panel>
-        <Panel title="Account Access" icon={WandSparkles}><p className="muted">Sign up or log in before starting a Focus Test. After the game ends and mood is saved, Groq creates your real shareable AI Insight receipt.</p></Panel>
-      </section>
-      <section className="experiment-grid">
-        <MusicPanel {...props} />
+
+      <div className="focus-steps">
+        <FocusStepCard step="1" title="Pick your task" subtitle="Choose a category and a game mode" icon={Target}>
+          <TaskSelector {...props} />
+        </FocusStepCard>
+
+        <FocusStepCard step="2" title="Set your mood" subtitle="Helps Groq personalize your music" icon={Activity}>
+          <div className="mood-step">
+            <MoodSlider label="Before" value={props.preMood} onChange={props.setPreMood} />
+            {props.phase !== 'setup' ? <MoodSlider label="After" value={props.postMood} onChange={props.setPostMood} /> : null}
+          </div>
+        </FocusStepCard>
+
+        <FocusStepCard step="3" title="Choose your sound" subtitle="AI-personalized music, or pick a focus tone" icon={Headphones}>
+          <MusicPanel {...props} />
+        </FocusStepCard>
+      </div>
+
+      <FocusStepCard step="4" title="Run the test" subtitle="Sign in required — sound locks while the timer runs" icon={Clock3}>
         <TaskPanel {...props} />
-      </section>
+      </FocusStepCard>
+
       {props.phase === 'results' ? <InsightAndFeedback {...props} /> : null}
-    </>
+    </div>
   );
 }
 
+function FocusStepCard({ step, title, subtitle, icon: Icon, children }) {
+  return (
+    <section className="focus-step-card">
+      <header className="focus-step-header">
+        <span className="focus-step-number">{step}</span>
+        <div className="focus-step-icon"><Icon size={20} /></div>
+        <div>
+          <h2>{title}</h2>
+          <p>{subtitle}</p>
+        </div>
+      </header>
+      <div className="focus-step-body">{children}</div>
+    </section>
+  );
+}
 function TaskSelector({ taskType, setTaskType, gameVariant, setGameVariant, isGameActive }) {
   const availableGames = taskGames[taskType] || [];
   return <div className="task-selector"><div className="segmented">{taskTypes.map((task) => {
@@ -1597,6 +1886,7 @@ function MusicPanel(props) {
   const roleSuggestions = roleSearch.trim()
     ? roleOptions.filter((role) => role.toLowerCase().includes(roleSearch.trim().toLowerCase()))
     : roleOptions;
+
   function updateRole(value) {
     setRoleSearch(value);
     props.setRole(value || 'Other');
@@ -1612,29 +1902,147 @@ function MusicPanel(props) {
     props.setProfileId('itunes');
     props.setAudioOn(same ? !props.audioOn : true);
   }
+
   return (
     <div className="sound-panel">
-      <div className="section-heading"><Headphones size={22} /><div><h2>Choose your sound</h2><p>Start with your mood and let Groq personalize the music for your focus task.</p></div></div>
-      {props.isGameActive ? <div className="music-lock">⚠️ You cannot change or pause the song while the game is running.</div> : null}
-      <div className="audio-mood-summary"><div><strong>Current mood</strong><span>Groq uses this to shape your recommendations</span></div><b>{props.preMood}/10</b></div>
-      <div className="role-input-section">
-        <strong>Select your role</strong>
+      {props.isGameActive ? <div className="music-lock">⚠️ Sound is locked while the test is running.</div> : null}
+
+      <div className="music-subsection">
+        <h3 className="music-subsection-title">Who's this session for?</h3>
+        <p className="music-subsection-hint">Groq tailors the questions and music to this role.</p>
         <div className="role-input-wrap">
-          <input value={roleSearch} onFocus={() => setShowRoleSuggestions(true)} onBlur={() => window.setTimeout(() => setShowRoleSuggestions(false), 150)} onChange={(event) => { updateRole(event.target.value); setShowRoleSuggestions(true); }} placeholder="Type Student, Teacher, Employee..." disabled={props.isGameActive} aria-label="Select your role" />
-          {showRoleSuggestions && roleSuggestions.length ? <div className="role-suggestions">{roleSuggestions.map((role) => <button key={role} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { updateRole(role); setShowRoleSuggestions(false); }}>{role}</button>)}</div> : null}
+          <input
+            value={roleSearch}
+            onFocus={() => setShowRoleSuggestions(true)}
+            onBlur={() => window.setTimeout(() => setShowRoleSuggestions(false), 150)}
+            onChange={(event) => { updateRole(event.target.value); setShowRoleSuggestions(true); }}
+            placeholder="Student, Teacher, Employee..."
+            disabled={props.isGameActive}
+            aria-label="Select your role"
+          />
+          {showRoleSuggestions && roleSuggestions.length ? (
+            <div className="role-suggestions">
+              {roleSuggestions.map((role) => (
+                <button key={role} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { updateRole(role); setShowRoleSuggestions(false); }}>{role}</button>
+              ))}
+            </div>
+          ) : null}
         </div>
-        <small>Choose a role or type your own. Groq uses it to personalize the questions and music options.</small>
       </div>
-      <div className="quiz-stack">
-        <button className={`advanced-toggle ${showAdvanced ? 'open' : ''}`} type="button" onClick={() => setShowAdvanced((value) => !value)} disabled={props.isGameActive}><span><SlidersHorizontal size={17} /> More personalization <small>optional</small></span><ChevronRight size={17} /></button>
-        {showAdvanced ? <div className="advanced-personalization">{visibleQuestions.map(([id, question, options]) => <div className="quiz-question" key={id}><strong>{question}</strong><div className="choice-row">{options.map((option) => <button key={option} className={props.quizAnswers[id] === option ? 'selected' : ''} onClick={() => props.setQuizAnswers({ ...props.quizAnswers, [id]: option })} disabled={props.isGameActive}>{option}</button>)}</div></div>)}
-        <label className="artist-field"><strong>Preferred artist <span>optional</span></strong><div className="artist-autocomplete"><input value={props.artistPreference} onChange={(event) => props.setArtistPreference(event.target.value)} placeholder="Example: FrankJavCee or songs like Hans Zimmer for calm focus" disabled={props.isGameActive} />{props.artistStatus === 'loading' ? <div className="artist-menu"><span>Searching artists...</span></div> : null}{props.artistSuggestions.length ? <div className="artist-menu">{props.artistSuggestions.map((artist) => <button key={artist.artistId} onClick={() => { props.setArtistPreference(artist.artistName); props.setArtistSuggestions([]); }}>{artist.artistName}</button>)}</div> : null}</div></label>
-        <div className="genre-field"><strong>Preferred genres <span>optional</span></strong><div className="genre-row">{genreOptions.map((genre) => <button key={genre} className={props.genres.includes(genre) ? 'selected' : ''} onClick={() => toggleGenre(genre)} disabled={props.isGameActive}>{genre}</button>)}</div></div>
-        <label className="language-field"><strong>Language / Region <span>optional</span></strong><select value={props.languagePreference} onChange={(event) => props.setLanguagePreference(event.target.value)} disabled={props.isGameActive}>{languageOptions.map((language) => <option key={language} value={language}>{language}</option>)}</select></label><div className="ai-options"><div className="ai-options-header"><strong>Music options</strong><small>{props.musicOptionsStatus === 'loading' ? 'Groq is personalizing...' : 'Groq personalized'}</small></div><div className="option-stack">{props.musicOptions.map((option) => <button key={`${option.title}-${option.searchTerm}`} className="music-option" onClick={() => props.searchSongs(option.searchTerm, true)} disabled={props.isGameActive}><span>{option.title}</span><small>{option.reason}</small><em>{option.searchTerm}</em></button>)}</div></div></div> : null}
+
+      <div className="music-subsection">
+        <button className={`advanced-toggle ${showAdvanced ? 'open' : ''}`} type="button" onClick={() => setShowAdvanced((value) => !value)} disabled={props.isGameActive}>
+          <span><SlidersHorizontal size={17} /> More personalization <small>optional</small></span>
+          <ChevronRight size={17} />
+        </button>
+        {showAdvanced ? (
+          <div className="advanced-personalization">
+            {visibleQuestions.map(([id, question, options]) => (
+              <div className="quiz-question" key={id}>
+                <strong>{question}</strong>
+                <div className="choice-row">
+                  {options.map((option) => (
+                    <button key={option} className={props.quizAnswers[id] === option ? 'selected' : ''} onClick={() => props.setQuizAnswers({ ...props.quizAnswers, [id]: option })} disabled={props.isGameActive}>{option}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            <label className="artist-field">
+              <strong>Preferred artist <span>optional</span></strong>
+              <div className="artist-autocomplete">
+                <input value={props.artistPreference} onChange={(event) => props.setArtistPreference(event.target.value)} placeholder="e.g. FrankJavCee, or 'like Hans Zimmer for calm focus'" disabled={props.isGameActive} />
+                {props.artistStatus === 'loading' ? <div className="artist-menu"><span>Searching artists...</span></div> : null}
+                {props.artistSuggestions.length ? (
+                  <div className="artist-menu">
+                    {props.artistSuggestions.map((artist) => (
+                      <button key={artist.artistId} onClick={() => { props.setArtistPreference(artist.artistName); props.setArtistSuggestions([]); }}>{artist.artistName}</button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </label>
+
+            <div className="genre-field">
+              <strong>Preferred genres <span>optional</span></strong>
+              <div className="genre-row">
+                {genreOptions.map((genre) => (
+                  <button key={genre} className={props.genres.includes(genre) ? 'selected' : ''} onClick={() => toggleGenre(genre)} disabled={props.isGameActive}>{genre}</button>
+                ))}
+              </div>
+            </div>
+
+            <label className="language-field">
+              <strong>Language / Region <span>optional</span></strong>
+              <select value={props.languagePreference} onChange={(event) => props.setLanguagePreference(event.target.value)} disabled={props.isGameActive}>
+                {languageOptions.map((language) => <option key={language} value={language}>{language}</option>)}
+              </select>
+            </label>
+          </div>
+        ) : null}
       </div>
-      <div className="itunes-search"><div className="search-line"><Search size={18} /><input value={props.songQuery} onChange={(event) => props.setSongQuery(event.target.value)} placeholder={props.suggestedQuery} disabled={props.isGameActive} /><button onClick={() => props.searchSongs(props.songQuery || props.suggestedQuery)} disabled={props.isGameActive}>Find</button></div><button className="secondary-action" onClick={() => props.searchSongs(props.suggestedQuery)} disabled={props.isGameActive}><Music2 size={18} /> Get iTunes options</button><small>{props.songStatus === 'loading' ? 'AI is extracting music keywords and searching iTunes...' : props.songStatus === 'ready' ? `Searched iTunes for: ${props.songQuery}` : `Suggested search: ${props.suggestedQuery}`}</small></div>
-      <div className="profile-grid compact">{audioProfiles.map((profile) => <button key={profile.id} className={`profile-card ${props.profileId === profile.id ? 'selected' : ''}`} onClick={() => props.setProfileId(profile.id)} disabled={props.isGameActive} style={{ '--profile-color': profile.color }}><div className="profile-topline"><span>{profile.name}</span>{props.profileId === profile.id ? <Check size={18} /> : null}</div><p>{profile.label}</p></button>)}</div>
-      <div className="song-grid">{props.songs.map((song) => <article key={song.trackId} className={`song-card ${props.selectedSong?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt="" /><button className="song-select" onClick={() => { props.setSelectedSong(song); props.setProfileId('itunes'); }} disabled={props.isGameActive}><span>{song.trackName}</span><small>{song.artistName}</small></button><button className="song-play" onClick={() => toggleSong(song)} disabled={props.isGameActive}>{props.selectedSong?.trackId === song.trackId && props.audioOn ? <Pause size={16} /> : <Play size={16} />}</button></article>)}{props.songStatus === 'empty' ? <p className="muted">No preview tracks found. Try another artist, genre, or search term.</p> : null}</div>
+
+      <div className="music-subsection">
+        <div className="ai-options-header">
+          <h3 className="music-subsection-title">AI music picks</h3>
+          <small>{props.musicOptionsStatus === 'loading' ? 'Groq is personalizing...' : 'Personalized for you'}</small>
+        </div>
+        <div className="option-stack">
+          {props.musicOptions.map((option) => (
+            <button key={`${option.title}-${option.searchTerm}`} className="music-option" onClick={() => props.searchSongs(option.searchTerm, true)} disabled={props.isGameActive}>
+              <span>{option.title}</span>
+              <small>{option.reason}</small>
+              <em>{option.searchTerm}</em>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="music-subsection">
+        <h3 className="music-subsection-title">Search iTunes</h3>
+        <div className="itunes-search">
+          <div className="search-line">
+            <Search size={18} />
+            <input value={props.songQuery} onChange={(event) => props.setSongQuery(event.target.value)} placeholder={props.suggestedQuery} disabled={props.isGameActive} />
+            <button onClick={() => props.searchSongs(props.songQuery || props.suggestedQuery)} disabled={props.isGameActive}>Find</button>
+          </div>
+          <small>{props.songStatus === 'loading' ? 'AI is extracting music keywords and searching iTunes...' : props.songStatus === 'ready' ? `Searched iTunes for: ${props.songQuery}` : `Suggested search: ${props.suggestedQuery}`}</small>
+        </div>
+      </div>
+
+      <div className="music-subsection">
+        <h3 className="music-subsection-title">Or pick a focus tone</h3>
+        <div className="profile-grid">
+          {audioProfiles.map((profile) => (
+            <button key={profile.id} className={`profile-card ${props.profileId === profile.id ? 'selected' : ''}`} onClick={() => props.setProfileId(profile.id)} disabled={props.isGameActive} style={{ '--profile-color': profile.color }}>
+              <div className="profile-topline"><span>{profile.name}</span>{props.profileId === profile.id ? <Check size={18} /> : null}</div>
+              <p>{profile.label}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {props.songs.length || props.songStatus === 'empty' ? (
+        <div className="music-subsection">
+          <h3 className="music-subsection-title">Search results</h3>
+          <div className="song-grid">
+            {props.songs.map((song) => (
+              <article key={song.trackId} className={`song-card ${props.selectedSong?.trackId === song.trackId ? 'selected' : ''}`}>
+                <img src={song.artworkUrl100} alt="" />
+                <button className="song-select" onClick={() => { props.setSelectedSong(song); props.setProfileId('itunes'); }} disabled={props.isGameActive}>
+                  <span>{song.trackName}</span>
+                  <small>{song.artistName}</small>
+                </button>
+                <button className="song-play" onClick={() => toggleSong(song)} disabled={props.isGameActive}>
+                  {props.selectedSong?.trackId === song.trackId && props.audioOn ? <Pause size={16} /> : <Play size={16} />}
+                </button>
+              </article>
+            ))}
+            {props.songStatus === 'empty' ? <p className="muted">No preview tracks found. Try another artist, genre, or search term.</p> : null}
+          </div>
+        </div>
+      ) : null}
+
       {props.selectedSong ? <SongTimeline {...props} /> : null}
     </div>
   );
@@ -1672,16 +2080,67 @@ function TaskPanel(props) {
     <div className="task-panel">
       <div className="section-heading"><Clock3 size={22} /><div><h2>Timed Focus Task</h2><p>{props.phase === 'testing' ? 'Answer quickly and accurately.' : 'Configure your audio and begin when ready.'}</p></div></div>
       {props.phase === 'setup' ? <EmptyTask {...props} /> : null}
-      {props.phase === 'testing' && props.taskType === 'icons' ? (
+    {props.phase === 'testing' && props.taskType === 'icons' && props.gameVariant !== 'icons-color-match' && props.gameVariant !== 'icons-category-count' ? (
         <div className="test-card icon-test-card">
           <div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>
           <IconMemoryGame trial={trial} memorizing={props.iconMemorizing} submitIconAnswer={props.submitIconAnswer} />
         </div>
       ) : null}
+      {props.phase === 'testing' && props.taskType === 'icons' && props.gameVariant === 'icons-color-match' && trial.stream ? (
+        <div className="test-card icon-color-test-card">
+          <IconColorStreamCard trial={trial} onDone={props.submitIconAnswer} />
+        </div>
+      ) : null}
+      {props.phase === 'testing' && props.taskType === 'icons' && props.gameVariant === 'icons-color-match' && (trial.mode === 'color-recall' || trial.mode === 'icon-recall') ? (
+        <div className="test-card icon-color-test-card">
+          <div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>
+          <IconColorQuestionGame trial={trial} recordAnswer={props.submitIconAnswer} />
+        </div>
+      ) : null}
+
+      {props.phase === 'testing' && props.taskType === 'icons' && props.gameVariant === 'icons-category-count' && trial.gridView ? (
+  <div className="test-card category-grid-test-card">
+    <IconCategoryGridView trial={trial} onDone={props.submitIconAnswer} />
+  </div>
+) : null}
+{props.phase === 'testing' && props.taskType === 'icons' && props.gameVariant === 'icons-category-count' && trial.mode === 'visual-gist' ? (
+  <div className="test-card category-grid-test-card">
+    <div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>
+    <VisualGistQuestionGame trial={trial} recordAnswer={props.submitIconAnswer} />
+  </div>
+) : null}
       {props.phase === 'testing' && props.taskType === 'math' && props.gameVariant === 'math-sort' ? <div className="test-card speed-sort-card"><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div><SortGame trial={trial} recordAnswer={props.submitIconAnswer} /></div> : null}
+      {props.phase === 'testing' && props.taskType === 'memory' && props.gameVariant === 'memory-category-sort' && trial.stream ? (
+  <div className="test-card stream-test-card">
+    <StreamWordCard trial={trial} onDone={props.submitIconAnswer} />
+  </div>
+) : null}
+{props.phase === 'testing' && props.taskType === 'memory' && props.gameVariant === 'memory-category-sort' && trial.mode === 'gist' ? (
+  <div className="test-card gist-test-card">
+    <div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>
+    <GistQuestionGame trial={trial} recordAnswer={props.submitIconAnswer} />
+  </div>
+) : null}
+{props.phase === 'testing' && props.taskType === 'memory' && props.gameVariant === 'memory-spatial' && trial.stream ? (
+  <div className="test-card spatial-test-card">
+    <SpatialWordCard trial={trial} onDone={props.submitIconAnswer} />
+  </div>
+) : null}
+{props.phase === 'testing' && props.taskType === 'memory' && props.gameVariant === 'memory-spatial' && trial.mode === 'spatial-locate' ? (
+  <div className="test-card spatial-test-card">
+    <div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>
+    <SpatialLocateGame trial={trial} recordAnswer={props.submitIconAnswer} />
+  </div>
+) : null}
+{props.phase === 'testing' && props.taskType === 'memory' && props.gameVariant === 'memory-spatial' && trial.mode === 'spatial-recall' ? (
+  <div className="test-card spatial-test-card">
+    <div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>
+    <SpatialRecallGame trial={trial} recordAnswer={props.submitIconAnswer} />
+  </div>
+) : null}
       {props.phase === 'testing' && props.taskType !== 'icons' && trial.mode === 'choice' ? <div className="test-card"><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div><ChoiceGame trial={trial} submitAnswer={props.submitAnswer} recordAnswer={props.submitIconAnswer} /></div> : null}
       {props.phase === 'testing' && props.taskType === 'math' && props.gameVariant === 'math-bonds' ? <div className="test-card bond-test-card"><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div><BondGame trial={trial} recordAnswer={props.submitIconAnswer} /></div> : null}
-      {props.phase === 'testing' && props.taskType !== 'icons' && !(props.taskType === 'math' && ['math-sort', 'math-bonds'].includes(props.gameVariant)) && trial.mode !== 'choice' ? <form className="test-card" onSubmit={props.submitAnswer}><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>{props.taskType === 'memory' ? <div className="memory-prompt"><span>{trial.intro ? 'First keyword' : 'New keyword'}</span><strong>{trial.q}</strong><p>{trial.intro ? 'Remember this keyword. On the next screen, type this previous keyword.' : 'Type the previous keyword, not the one shown above.'}</p></div> : <h3>{trial.q}</h3>}{props.taskType === 'memory' && trial.intro ? null : <input autoFocus value={props.currentAnswer} onChange={(event) => props.setCurrentAnswer(event.target.value)} placeholder={props.taskType === 'memory' ? 'Previous keyword' : 'Answer'} />}<button className="primary-action" type="submit">{props.taskType === 'memory' && trial.intro ? 'Start recall' : 'Submit'} <ChevronRight size={18} /></button></form> : null}
+      {props.phase === 'testing' && props.taskType !== 'icons' && !(props.taskType === 'math' && ['math-sort', 'math-bonds'].includes(props.gameVariant)) && props.gameVariant !== 'memory-category-sort' && props.gameVariant !== 'memory-spatial' && trial.mode !== 'choice' ? <form className="test-card" onSubmit={props.submitAnswer}><div className="test-meta"><span><TimerReset size={16} /> {props.elapsed}s</span><span>{props.trialIndex + 1}/{props.trials.length}</span></div>{props.taskType === 'memory' ? <div className="memory-prompt"><span>{trial.intro ? 'First keyword' : 'New keyword'}</span><strong>{trial.q}</strong><p>{trial.intro ? 'Remember this keyword. On the next screen, type this previous keyword.' : 'Type the previous keyword, not the one shown above.'}</p></div> : <h3>{trial.q}</h3>}{props.taskType === 'memory' && trial.intro ? null : <input autoFocus value={props.currentAnswer} onChange={(event) => props.setCurrentAnswer(event.target.value)} placeholder={props.taskType === 'memory' ? 'Previous keyword' : 'Answer'} />}<button className="primary-action" type="submit">{props.taskType === 'memory' && trial.intro ? 'Start recall' : 'Submit'} <ChevronRight size={18} /></button></form> : null}
       {props.phase === 'post' ? <div className="test-card"><div className="score-orb">{props.currentScore}%</div><h3>Post-session mood</h3><p>This score includes accuracy and a time penalty. Record your current mood before saving.</p><MoodSlider label="After" value={props.postMood} onChange={props.setPostMood} /><button className="primary-action" onClick={props.saveSession}>Save result <BarChart3 size={18} /></button></div> : null}
       {props.phase === 'results' && props.latestSession ? <div className="test-card results-card"><div className="score-row"><Metric label="Score" value={`${props.latestSession.accuracy}%`} /><Metric label="Session" value={formatSeconds(props.latestSession.sessionLength)} /><Metric label="Mood" value={`${props.latestSession.postMood}/10`} /></div><h3>Session complete</h3><p>Generate a logged-in AI Insight card or share feedback below.</p><button className="secondary-action" onClick={props.startTest}><RefreshCw size={18} /> Run another test</button></div> : null}
     </div>
@@ -1732,6 +2191,263 @@ function IconMemoryGame({ trial, memorizing, submitIconAnswer }) {
           {trial.options.map((option) => <button key={option.icon || option} type="button" onClick={() => submitIconAnswer(option.icon || option)} aria-label={option.label || `Cell ${option}`}>{trial.mode === 'position' ? `Cell ${option}` : option.icon}</button>)}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+
+function IconColorStreamCard({ trial, onDone }) {
+  useEffect(() => {
+    const timeout = window.setTimeout(() => onDone('seen'), 1400);
+    return () => window.clearTimeout(timeout);
+  }, [trial.q]);
+
+  return (
+    <div className="icon-color-stream">
+      <div className="stream-progress">
+        {Array.from({ length: trial.streamTotal }).map((_, index) => (
+          <span key={index} className={index < trial.streamIndex ? 'seen' : ''} />
+        ))}
+      </div>
+      <div className="icon-color-card" style={{ '--pair-color': trial.color.hex }}>
+        <span className="icon-color-swatch-label">{trial.color.name}</span>
+        <span className="icon-color-emoji">{trial.icon}</span>
+      </div>
+      <p className="stream-hint">Remember which color each icon was paired with.</p>
+    </div>
+  );
+}
+
+function IconColorQuestionGame({ trial, recordAnswer }) {
+  if (trial.mode === 'color-recall') {
+    return (
+      <div className="icon-color-question">
+        <span className="gist-type-badge"><Eye size={15} /> Color match</span>
+        <div className="icon-color-prompt-emoji">{trial.icon}</div>
+        <h3>{trial.q}</h3>
+        <div className="color-options">
+          {trial.options.map((option) => (
+            <button key={option.name} type="button" className="color-option" style={{ '--pair-color': option.hex }} onClick={() => recordAnswer(option.name)}>
+              <span className="color-swatch" />
+              <span>{option.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="icon-color-question">
+      <span className="gist-type-badge"><Brain size={15} /> Icon match</span>
+      <div className="icon-color-prompt-swatch" style={{ '--pair-color': trial.color.hex }}>
+        <span>{trial.color.name}</span>
+      </div>
+      <h3>{trial.q}</h3>
+      <div className="gist-options">
+        {trial.options.map((option) => (
+          <button key={option} type="button" className="gist-option icon-option" onClick={() => recordAnswer(option)}>{option}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function IconCategoryGridView({ trial, onDone }) {
+  const [remaining, setRemaining] = useState(trial.viewSeconds);
+
+  useEffect(() => {
+    setRemaining(trial.viewSeconds);
+    const interval = window.setInterval(() => setRemaining((value) => Math.max(0, value - 1)), 1000);
+    const timeout = window.setTimeout(() => onDone('seen'), trial.viewSeconds * 1000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, [trial.q]);
+
+  const categoryClass = { animal: 'cat-animal', food: 'cat-food', tech: 'cat-tech' };
+
+  return (
+    <div className="category-grid-view">
+      <div className="category-grid-header">
+        <span className="category-grid-title">Memorize the grid</span>
+        <span className="category-grid-timer">{remaining}s</span>
+      </div>
+      <div className="category-icon-grid">
+        {trial.grid.map((item, index) => (
+          <div key={`${item.icon}-${index}`} className={`category-icon-cell ${categoryClass[item.category] || ''}`}>
+            <span>{item.icon}</span>
+          </div>
+        ))}
+      </div>
+      <p className="stream-hint">Notice categories and counts — you'll be asked about the gist, not exact positions.</p>
+    </div>
+  );
+}
+
+function VisualGistQuestionGame({ trial, recordAnswer }) {
+  const typeMeta = {
+    seen: { icon: Eye, label: 'Recognition' },
+    count: { icon: BarChart3, label: 'Count' },
+    oddOne: { icon: Search, label: 'Spot the outsider' },
+  };
+  const meta = typeMeta[trial.gistType] || typeMeta.seen;
+  const Icon = meta.icon;
+
+  if (trial.gistType === 'seen') {
+    return (
+      <div className="gist-question visual-gist-question">
+        <span className="gist-type-badge"><Icon size={15} /> {meta.label}</span>
+        <div className="visual-gist-prompt-icon">{trial.promptIcon}</div>
+        <h3>{trial.q}</h3>
+        <div className="gist-options">
+          {trial.options.map((option) => (
+            <button key={option} type="button" className="gist-option" onClick={() => recordAnswer(option)}>{option}</button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (trial.gistType === 'oddOne') {
+    return (
+      <div className="gist-question visual-gist-question">
+        <span className="gist-type-badge"><Icon size={15} /> {meta.label}</span>
+        <h3>{trial.q}</h3>
+        <div className="visual-gist-icon-options">
+          {trial.options.map((option) => (
+            <button key={option} type="button" className="gist-option icon-option" onClick={() => recordAnswer(option)}>{option}</button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="gist-question visual-gist-question">
+      <span className="gist-type-badge"><Icon size={15} /> {meta.label}</span>
+      <h3>{trial.q}</h3>
+      <div className="gist-options">
+        {trial.options.map((option) => (
+          <button key={option} type="button" className="gist-option" onClick={() => recordAnswer(option)}>{option}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StreamWordCard({ trial, onDone }) {
+  useEffect(() => {
+    const timeout = window.setTimeout(() => onDone('seen'), 1250);
+    return () => window.clearTimeout(timeout);
+  }, [trial.q]);
+
+  const categoryStyles = {
+    animal: { label: 'Animal', className: 'category-animal' },
+    object: { label: 'Object', className: 'category-object' },
+    color: { label: 'Color', className: 'category-color' },
+  };
+  const meta = categoryStyles[trial.category] || categoryStyles.object;
+
+  return (
+    <div className="stream-word-stage">
+      <div className="stream-progress">
+        {Array.from({ length: trial.streamTotal }).map((_, index) => (
+          <span key={index} className={index < trial.streamIndex ? 'seen' : ''} />
+        ))}
+      </div>
+      <div className={`stream-word-card ${meta.className}`} key={trial.q}>
+        <span className="stream-category-badge">{meta.label}</span>
+        <strong className="stream-word-text">{trial.q}</strong>
+      </div>
+      <p className="stream-hint">Watch closely — you won't type these back, just remember the gist.</p>
+    </div>
+  );
+}
+
+function GistQuestionGame({ trial, recordAnswer }) {
+  const typeMeta = {
+    seen: { icon: Eye, label: 'Recognition' },
+    count: { icon: BarChart3, label: 'Count' },
+    oddOne: { icon: Search, label: 'Spot the outsider' },
+  };
+  const meta = typeMeta[trial.gistType] || typeMeta.seen;
+  const Icon = meta.icon;
+  return (
+    <div className="gist-question">
+      <span className="gist-type-badge"><Icon size={15} /> {meta.label}</span>
+      <h3>{trial.q}</h3>
+      <div className="gist-options">
+        {trial.options.map((option) => (
+          <button key={option} type="button" className="gist-option" onClick={() => recordAnswer(option)}>{option}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SpatialStageZones({ activePosition, children, onZoneClick, filled = {} }) {
+  return (
+    <div className="spatial-stage">
+      {spatialPositions.map((position) => (
+        <div key={position} className={`spatial-zone zone-${position} ${activePosition === position ? 'active' : ''}`}>
+          {onZoneClick ? (
+            <button type="button" className="spatial-zone-btn" onClick={() => onZoneClick(position)}>
+              {filled[position] || <span className="zone-dot" />}
+            </button>
+          ) : (
+            activePosition === position ? children : <span className="zone-dot" />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SpatialWordCard({ trial, onDone }) {
+  useEffect(() => {
+    const timeout = window.setTimeout(() => onDone('seen'), 1400);
+    return () => window.clearTimeout(timeout);
+  }, [trial.q]);
+
+  return (
+    <div className="spatial-word-wrap">
+      <div className="stream-progress">
+        {Array.from({ length: trial.streamTotal }).map((_, index) => (
+          <span key={index} className={index < trial.streamIndex ? 'seen' : ''} />
+        ))}
+      </div>
+      <SpatialStageZones activePosition={trial.position}>
+        <span className="spatial-word-chip">{trial.q}</span>
+      </SpatialStageZones>
+      <p className="stream-hint">Notice where each word appears — you'll be asked about position, not order.</p>
+    </div>
+  );
+}
+
+function SpatialLocateGame({ trial, recordAnswer }) {
+  return (
+    <div className="spatial-question">
+      <span className="gist-type-badge"><Target size={15} /> Locate</span>
+      <h3>{trial.q}</h3>
+      <p className="muted">Tap the zone where you saw this word.</p>
+      <SpatialStageZones onZoneClick={recordAnswer} />
+    </div>
+  );
+}
+
+function SpatialRecallGame({ trial, recordAnswer }) {
+  const filled = { [trial.targetPosition]: <span className="zone-mark">?</span> };
+  return (
+    <div className="spatial-question">
+      <span className="gist-type-badge"><Brain size={15} /> Recall</span>
+      <h3>{trial.q}</h3>
+      <SpatialStageZones filled={filled} onZoneClick={() => {}} />
+      <div className="gist-options spatial-word-options">
+        {trial.options.map((option) => (
+          <button key={option} type="button" className="gist-option" onClick={() => recordAnswer(option)}>{option}</button>
+        ))}
+      </div>
     </div>
   );
 }
